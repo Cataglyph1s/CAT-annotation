@@ -63,6 +63,35 @@ class ImageLoader:
         """Checks if there are any images available."""
         return bool(self.image_files)
 
+    def clean_label_files(self):
+        """Remove duplicate and malformed lines from all label files."""
+        cleaned = 0
+        for image_file in self.image_files:
+            label_path = os.path.join(self.labels_folder, image_file.rsplit('.', 1)[0] + '.txt')
+            if not os.path.exists(label_path):
+                continue
+            with open(label_path, 'r') as f:
+                lines = f.readlines()
+            seen = set()
+            valid = []
+            for line in lines:
+                stripped = line.strip()
+                parts = stripped.split()
+                if len(parts) != 5:
+                    continue
+                try:
+                    map(float, parts)
+                except ValueError:
+                    continue
+                if stripped not in seen:
+                    seen.add(stripped)
+                    valid.append(stripped)
+            if len(valid) != len([l for l in lines if l.strip()]):
+                with open(label_path, 'w') as f:
+                    f.write('\n'.join(valid) + ('\n' if valid else ''))
+                cleaned += 1
+        return cleaned
+
     def load_last_image_index(self):
         if os.path.exists(self.index_file):
             with open(self.index_file, 'r') as f:

@@ -6,6 +6,7 @@ class BoundingBox:
         self.y2 = y2
         self.class_num = class_num
         self.rect_id = None  # ID of the rectangle in the canvas
+        self.text_id = None  # ID of the class label text in the canvas
 
     def to_normalized(self, img_width, img_height):
         x_center = (self.x1 + self.x2) / 2 / img_width
@@ -13,6 +14,12 @@ class BoundingBox:
         width = abs(self.x2 - self.x1) / img_width
         height = abs(self.y2 - self.y1) / img_height
         return f"{self.class_num} {x_center} {y_center} {width} {height}"
+
+    def copy(self):
+        copied = BoundingBox(self.x1, self.y1, self.x2, self.y2, self.class_num)
+        copied.rect_id = self.rect_id
+        copied.text_id = self.text_id
+        return copied
 
     @classmethod
     def from_normalized(cls, class_num, x_center, y_center, width, height, img_width, img_height):

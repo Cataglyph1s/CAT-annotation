@@ -4,12 +4,12 @@ from PIL import Image, ImageTk
 from bounding_box import BoundingBox
 
 class BoundingBoxEditor:
-    def __init__(self, root):
+    def __init__(self, root, canvas_parent=None):
         self.root = root
 
         # Create the canvas, it will resize dynamically
-        self.canvas = tk.Canvas(root)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        parent = canvas_parent if canvas_parent else root
+        self.canvas = tk.Canvas(parent)
 
         self.image = None
         self.tk_image = None
@@ -17,8 +17,20 @@ class BoundingBoxEditor:
         self.selected_bbox = None
         self.current_bbox = None
         self.edit_mode = False
+        self.current_class = 0
+        self.on_bbox_added = None
+        self.class_mapping = {}
         self.original_width = 0  # Store original image width
         self.original_height = 0  # Store original image height
+        self.annotations_visible = True
+        self.x_offset = 0
+        self.y_offset = 0
+        self.scale_factor = 1
+        self._loading = False
+        self._resize_handles = []
+        self._resize_bbox = None
+        self._drag_corner = None
+        self._resizing = False
 
         # Bindings for bbox
         self.canvas.bind("<Button-1>", self.start_bbox)
@@ -35,12 +47,19 @@ class BoundingBoxEditor:
             self.load_image(self.image_path, self.label_path)
 
     def load_image(self, image_path, label_path=None, fullscreen=False):
+        if self._loading:
+            return
+        self._loading = True
         self.image_path = image_path  # Store paths to reload after resize
         self.label_path = label_path
 
         self.canvas.delete("all")
         self.bboxes.clear()
         self.selected_bbox = None
+        self._resize_handles = []
+        self._resize_bbox = None
+        self._drag_corner = None
+        self._resizing = False
 
         # Open the image
         self.image = Image.open(image_path)
@@ -69,6 +88,9 @@ class BoundingBoxEditor:
         # Center the image in the canvas
         x_offset = (canvas_width - new_width) // 2
         y_offset = (canvas_height - new_height) // 2
+        self.x_offset = x_offset
+        self.y_offset = y_offset
+        self.scale_factor = scale_factor
         self.canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=self.tk_image)
 
         # Load annotations (bounding boxes) after resizing the image
@@ -76,10 +98,14 @@ class BoundingBoxEditor:
             with open(label_path, 'r') as f:
                 for line in f:
                     parts = line.split()
+                    if len(parts) != 5:
+                        continue
                     class_num, x_center, y_center, width, height = map(float, parts)
                     bbox = BoundingBox.from_normalized(class_num, x_center, y_center, width, height, self.original_width, self.original_height)
                     self.bboxes.append(bbox)
                     self.draw_bounding_box(bbox, x_offset, y_offset, scale_factor)
+
+        self._loading = False
 
     def draw_bounding_box(self, bbox, x_offset, y_offset, scale_factor):
         """Draw bounding boxes with proper scaling and offset."""
@@ -90,16 +116,17 @@ class BoundingBoxEditor:
         scaled_y2 = bbox.y2 * scale_factor + y_offset
 
         # Draw the rectangle
-        rect = self.canvas.create_rectangle(scaled_x1, scaled_y1, scaled_x2, scaled_y2, outline="red", width=2)
-        self.canvas.create_text(scaled_x1, scaled_y1 - 10, anchor=tk.NW, text=f"Class: {bbox.class_num}", fill="red")
-        bbox.rect_id = rect  # Save the rectangle ID
+        label = self.class_mapping.get(int(bbox.class_num), str(int(bbox.class_num)))
+        rect = self.canvas.create_rectangle(scaled_x1, scaled_y1, scaled_x2, scaled_y2, outline="red", width=2, tags="annotation")
+        text = self.canvas.create_text(scaled_x1, scaled_y1 - 10, anchor=tk.NW, text=label, fill="red", tags="annotation")
+        bbox.rect_id = rect
+        bbox.text_id = text
 
-    def toggle_edit_mode(self, class_dropdown):
+    def toggle_edit_mode(self):
         self.edit_mode = not self.edit_mode
-        self.current_class = class_dropdown.current()
 
     def start_bbox(self, event):
-        if not self.edit_mode:
+        if not self.edit_mode or self._resizing:
             return
         self.current_bbox = [event.x, event.y, event.x, event.y]
 
@@ -117,17 +144,22 @@ class BoundingBoxEditor:
                                      outline="blue", width=2, tag="preview")
 
     def save_bbox(self, event):
-        if not self.edit_mode or self.current_bbox is None:
+        if not self.edit_mode or self.current_bbox is None or self._resizing:
             return
 
         x1, y1, x2, y2 = self.current_bbox
         class_num = self.current_class
-        # Normalize the coordinates before saving
         if self.original_width > 0 and self.original_height > 0:
-            bbox = BoundingBox(x1 / self.original_width, y1 / self.original_height,
-                               x2 / self.original_width, y2 / self.original_height, class_num)
+            # Convert canvas coords back to original image pixel coords
+            orig_x1 = int((x1 - self.x_offset) / self.scale_factor)
+            orig_y1 = int((y1 - self.y_offset) / self.scale_factor)
+            orig_x2 = int((x2 - self.x_offset) / self.scale_factor)
+            orig_y2 = int((y2 - self.y_offset) / self.scale_factor)
+            bbox = BoundingBox(orig_x1, orig_y1, orig_x2, orig_y2, class_num)
             self.bboxes.append(bbox)
-            self.draw_bounding_box(bbox)
+            self.draw_bounding_box(bbox, self.x_offset, self.y_offset, self.scale_factor)
+            if self.on_bbox_added:
+                self.on_bbox_added()
         self.current_bbox = None
 
     def select_bbox(self, event):
@@ -136,6 +168,83 @@ class BoundingBoxEditor:
                 self.selected_bbox = bbox
                 self.canvas.itemconfig(bbox.rect_id, outline="blue")  # Highlight selected bbox
                 break
+
+    def show_resize_handles(self, bbox):
+        """Draw corner handles on the selected bounding box."""
+        self.clear_resize_handles()
+        self._resize_bbox = bbox
+        r = 6
+        corners = [
+            ('tl', bbox.x1, bbox.y1),
+            ('tr', bbox.x2, bbox.y1),
+            ('bl', bbox.x1, bbox.y2),
+            ('br', bbox.x2, bbox.y2),
+        ]
+        for corner_id, ox, oy in corners:
+            cx = ox * self.scale_factor + self.x_offset
+            cy = oy * self.scale_factor + self.y_offset
+            handle = self.canvas.create_oval(
+                cx - r, cy - r, cx + r, cy + r,
+                fill='white', outline='blue', width=2, tags='resize_handle'
+            )
+            self.canvas.tag_bind(handle, '<Button-1>',
+                                 lambda e, c=corner_id: self._start_resize(e, c))
+            self.canvas.tag_bind(handle, '<B1-Motion>', self._do_resize)
+            self.canvas.tag_bind(handle, '<ButtonRelease-1>', self._end_resize)
+            self._resize_handles.append(handle)
+
+    def clear_resize_handles(self):
+        for h in self._resize_handles:
+            self.canvas.delete(h)
+        self._resize_handles = []
+        self._resize_bbox = None
+        self._drag_corner = None
+        self._resizing = False
+
+    def _start_resize(self, event, corner_id):
+        self._drag_corner = corner_id
+        self._resizing = True
+        self.current_bbox = None  # cancel any in-progress draw
+
+    def _do_resize(self, event):
+        if not self._drag_corner or not self._resize_bbox:
+            return
+        bbox = self._resize_bbox
+        orig_x = int((event.x - self.x_offset) / self.scale_factor)
+        orig_y = int((event.y - self.y_offset) / self.scale_factor)
+        if 'l' in self._drag_corner:
+            bbox.x1 = orig_x
+        if 'r' in self._drag_corner:
+            bbox.x2 = orig_x
+        if 't' in self._drag_corner:
+            bbox.y1 = orig_y
+        if 'b' in self._drag_corner:
+            bbox.y2 = orig_y
+        # Update the rectangle and label on canvas
+        sx1 = bbox.x1 * self.scale_factor + self.x_offset
+        sy1 = bbox.y1 * self.scale_factor + self.y_offset
+        sx2 = bbox.x2 * self.scale_factor + self.x_offset
+        sy2 = bbox.y2 * self.scale_factor + self.y_offset
+        self.canvas.coords(bbox.rect_id, sx1, sy1, sx2, sy2)
+        self.canvas.coords(bbox.text_id, sx1, sy1 - 10)
+        # Move handles to new corner positions
+        r = 6
+        corners = [(bbox.x1, bbox.y1), (bbox.x2, bbox.y1),
+                   (bbox.x1, bbox.y2), (bbox.x2, bbox.y2)]
+        for handle, (ox, oy) in zip(self._resize_handles, corners):
+            cx = ox * self.scale_factor + self.x_offset
+            cy = oy * self.scale_factor + self.y_offset
+            self.canvas.coords(handle, cx - r, cy - r, cx + r, cy + r)
+
+    def _end_resize(self, event):
+        self._drag_corner = None
+        self._resizing = False
+
+    def toggle_annotations(self):
+        self.annotations_visible = not self.annotations_visible
+        state = 'normal' if self.annotations_visible else 'hidden'
+        self.canvas.itemconfigure("annotation", state=state)
+        return self.annotations_visible
 
     def delete_selected_bbox(self):
         if self.selected_bbox:

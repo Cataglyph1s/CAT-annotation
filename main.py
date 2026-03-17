@@ -13,6 +13,7 @@ if __name__ == "__main__":
     folder = "C:/Users/jmouvet/Samira/Datasets/Samira_2_0/Training_Sets/Samira2Dataset003/train"
     app = ImageViewer(root, folder)
     root.mainloop()
+    version = "v0.2.0"
 
     # ----------------------------------------------------------------------------------
     # TODO:

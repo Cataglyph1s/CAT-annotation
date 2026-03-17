@@ -15,8 +15,8 @@ class ImageViewerController:
         self.root = root
         self.folder = folder
         self.fullscreen = False
-        self.loader = ImageLoader(folder)
-        self.current_index = self.loader.load_last_image_index()
+        self.loader = None
+        self.current_index = 0
 
         # Initialize the action stack
         self.action_stack = []
@@ -28,24 +28,28 @@ class ImageViewerController:
 
         # Canvas on root, packed after right_panel so it fills remaining space correctly
         self.editor = BoundingBoxEditor(root)
-        self.editor.class_mapping = self.loader.class_mapping
         self.canvas = self.editor.canvas
         self.canvas.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
 
         # Callback so editor can notify controller when a bbox is added
         self.editor.on_bbox_added = self._on_bbox_added
 
-        # Apply project config (class colours) if a project.json is found
-        self._apply_project_config(folder)
-
         # Bind keyboard shortcuts
         self.bind_shortcuts()
 
-        self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
-        cleaned = self.loader.clean_label_files()
-        self.show_image()
-        if cleaned:
-            self.view.update_info_bar(f"Cleaned {cleaned} corrupted label file(s) on launch.")
+        if folder:
+            self.loader = ImageLoader(folder)
+            self.current_index = self.loader.load_last_image_index()
+            self.editor.class_mapping = self.loader.class_mapping
+            self._apply_project_config(folder)
+            self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
+            cleaned = self.loader.clean_label_files()
+            self.show_image()
+            if cleaned:
+                self.view.update_info_bar(f"Cleaned {cleaned} corrupted label file(s) on launch.")
+        else:
+            self.view.update_info_bar("No project loaded. Use the ☰ menu to create or open a project.")
+            root.after(200, self.open_project_wizard)
 
     def bind_shortcuts(self):
         """Binds all keyboard shortcuts to their respective functions."""
@@ -64,6 +68,8 @@ class ImageViewerController:
 
     def show_image(self):
         """Displays the current image and its bounding boxes."""
+        if self.loader is None:
+            return
         if not self.loader.has_images():
             messagebox.showinfo("Info", "No images left.")
             self.root.quit()
@@ -78,12 +84,16 @@ class ImageViewerController:
         self.view.update_path(image_path)
 
     def show_next_image(self):
+        if self.loader is None:
+            return
         if self.autosave:
             self.save_bounding_boxes()
         self.current_index = (self.current_index + 1) % self.loader.num_images()
         self.show_image()
 
     def show_prev_image(self):
+        if self.loader is None:
+            return
         if self.autosave:
             self.save_bounding_boxes()
         self.current_index = (self.current_index - 1) % self.loader.num_images()
@@ -99,6 +109,8 @@ class ImageViewerController:
 
     def set_current_class(self, class_num):
         """Sets the active class and reassigns selected bbox if one is selected."""
+        if self.loader is None:
+            return
         self.editor.current_class = class_num
         if self.editor.selected_bbox:
             if not self.editor.edit_mode:
@@ -138,6 +150,8 @@ class ImageViewerController:
 
     def class_shortcut(self, event):
         """Handles class selection via number key shortcuts."""
+        if self.loader is None:
+            return
         class_num = int(event.char)
         if class_num in self.loader.class_mapping:
             self.view.select_class(class_num)
@@ -145,6 +159,8 @@ class ImageViewerController:
 
     def save_bounding_boxes(self):
         """Saves bounding boxes to the corresponding label file."""
+        if self.loader is None:
+            return
         label_path = self.loader.get_label_path(self.current_index)
 
         img_width, img_height = self.editor.original_width, self.editor.original_height
@@ -217,6 +233,8 @@ class ImageViewerController:
         self.view.update_info_bar("Auto-Save enabled." if self.autosave else "Auto-Save disabled.")
 
     def _on_bbox_added(self):
+        if self.loader is None:
+            return
         self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
 
     def toggle_annotations(self):
@@ -246,6 +264,8 @@ class ImageViewerController:
 
     def delete_current_image(self):
         """Deletes the current image and its corresponding label."""
+        if self.loader is None:
+            return
         if not self.editor.edit_mode:
             self.view.update_info_bar("Enable Edit Mode to delete images.")
             return
@@ -279,6 +299,8 @@ class ImageViewerController:
 
     def undo_last_action(self):
         """Undoes the last action by reversing it."""
+        if self.loader is None:
+            return
         if not self.action_stack:
             print("No actions to undo.")
             return

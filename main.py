@@ -1,6 +1,6 @@
 import os
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox  # used in _ensure_program_root
 
 from image_viewer_controller import ImageViewerController
 from app_config import AppConfig
@@ -14,32 +14,29 @@ class ImageViewer:
 
 
 def _ensure_program_root(root):
-    """Prompts the user to set the program root if not yet configured. Returns False if cancelled."""
+    """Prompts the user to pick a location; creates a CATannotation folder there. Returns False if cancelled."""
     if AppConfig.get_program_root():
         return True
+
     messagebox.showinfo(
         "Welcome to CAT:annotation",
-        "Please select a root folder where all your projects will be stored.",
+        "Choose where to create your CATannotation projects folder.",
         parent=root)
-    path = filedialog.askdirectory(parent=root, title="Select Program Root Folder")
-    if not path:
+    location = filedialog.askdirectory(parent=root, title="Select Location for CATannotation Folder")
+    if not location:
         return False
-    AppConfig.set_program_root(path)
+    full_path = os.path.join(location, "CATannotation")
+    os.makedirs(full_path, exist_ok=True)
+    AppConfig.set_program_root(full_path)
     return True
 
 
-def _get_startup_folder(root):
-    """Returns the last used folder if still valid, otherwise prompts the user."""
+def _get_startup_folder():
+    """Returns the last used folder if still valid, otherwise None."""
     last = AppConfig.get_last_folder()
     if last and os.path.isdir(last) and os.path.isdir(os.path.join(last, "images")):
         return last
-    if last:
-        messagebox.showwarning(
-            "Folder not found",
-            f"The last used folder could not be found:\n{last}\n\nPlease select a folder to open.",
-            parent=root)
-    path = filedialog.askdirectory(parent=root, title="Select a dataset folder to open")
-    return path or None
+    return None
 
 
 if __name__ == "__main__":
@@ -51,11 +48,7 @@ if __name__ == "__main__":
         root.destroy()
         raise SystemExit
 
-    folder = _get_startup_folder(root)
-    if not folder:
-        root.destroy()
-        raise SystemExit
-
+    folder = _get_startup_folder()
     root.deiconify()
     app = ImageViewer(root, folder)
     root.mainloop()

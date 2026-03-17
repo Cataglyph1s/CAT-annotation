@@ -25,4 +25,5 @@ if __name__ == "__main__":
     # 4) Add Users to project
     # 5) Zoom function for high-res/small-object annotation (small buttons + shortcut)
     # 6) Think about central save options
+    # 7) Change to CAT:annotation
     # -----------------------------------------------------------------------------------

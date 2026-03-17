@@ -9,7 +9,7 @@ class ImageViewer:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title("CAT.Annotation")
+    root.title("CAT:annotation")
     folder = "C:/Users/jmouvet/Samira/Datasets/Samira_2_0/Training_Sets/Samira2Dataset003/train"
     app = ImageViewer(root, folder)
     root.mainloop()
@@ -25,5 +25,5 @@ if __name__ == "__main__":
     # 4) Add Users to project
     # 5) Zoom function for high-res/small-object annotation (small buttons + shortcut)
     # 6) Think about central save options
-    # 7) Change to CAT:annotation
+    # 7) Change  name to CAT:annotation
     # -----------------------------------------------------------------------------------

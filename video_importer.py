@@ -10,8 +10,9 @@ class VideoImporter:
         ("All files", "*.*"),
     )
 
-    def __init__(self, root, on_import_done=None):
+    def __init__(self, root, on_import_done=None, initial_output_folder=None):
         self.on_import_done = on_import_done
+        self._initial_output_folder = initial_output_folder
 
         self._progress = 0
         self._status = ""
@@ -26,6 +27,8 @@ class VideoImporter:
         self.window.grab_set()
 
         self._build_ui()
+        if self._initial_output_folder:
+            self.output_path.set(self._initial_output_folder)
 
     def _build_ui(self):
         pad = {"padx": 10, "pady": 6}

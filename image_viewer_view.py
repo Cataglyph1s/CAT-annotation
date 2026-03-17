@@ -20,6 +20,8 @@ class ImageViewerView:
         self.menu_button.pack(side=tk.LEFT)
         self.app_menu = tk.Menu(self.menu_button, tearoff=0)
         self.menu_button.config(menu=self.app_menu)
+        self.app_menu.add_command(label="New Project...", command=self.controller.open_project_wizard)
+        self.app_menu.add_separator()
         self.app_menu.add_command(label="Open Folder...", command=self.controller.open_folder)
         self.app_menu.add_command(label="Import Video...", command=self.controller.open_video_importer)
 

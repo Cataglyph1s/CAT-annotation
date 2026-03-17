@@ -20,6 +20,7 @@ class BoundingBoxEditor:
         self.current_class = 0
         self.on_bbox_added = None
         self.class_mapping = {}
+        self.class_colors = {}
         self.original_width = 0  # Store original image width
         self.original_height = 0  # Store original image height
         self.annotations_visible = True
@@ -119,8 +120,9 @@ class BoundingBoxEditor:
         class_id = int(bbox.class_num)
         class_name = self.class_mapping.get(class_id, str(class_id))
         label = f"{class_id}: {class_name}"
-        rect = self.canvas.create_rectangle(scaled_x1, scaled_y1, scaled_x2, scaled_y2, outline="red", width=2, tags="annotation")
-        text = self.canvas.create_text(scaled_x1, scaled_y1 - 4, anchor=tk.SW, text=label, fill="red", tags="annotation")
+        color = self.class_colors.get(class_id, '#555555')
+        rect = self.canvas.create_rectangle(scaled_x1, scaled_y1, scaled_x2, scaled_y2, outline=color, width=2, tags="annotation")
+        text = self.canvas.create_text(scaled_x1, scaled_y1 - 4, anchor=tk.SW, text=label, fill=color, tags="annotation")
         bbox.rect_id = rect
         bbox.text_id = text
 

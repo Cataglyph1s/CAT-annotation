@@ -2,6 +2,8 @@ from image_loader import ImageLoader
 from bbox_editor import BoundingBoxEditor
 from image_viewer_view import ImageViewerView
 from video_importer import VideoImporter
+from project_manager import ProjectManager
+from project_wizard import ProjectWizard
 
 import tkinter as tk
 from tkinter import messagebox, filedialog
@@ -31,6 +33,9 @@ class ImageViewerController:
 
         # Callback so editor can notify controller when a bbox is added
         self.editor.on_bbox_added = self._on_bbox_added
+
+        # Apply project config (class colours) if a project.json is found
+        self._apply_project_config(folder)
 
         # Bind keyboard shortcuts
         self.bind_shortcuts()
@@ -106,9 +111,10 @@ class ImageViewerController:
         """Changes the class of the currently selected bounding box."""
         bbox = self.editor.selected_bbox
         bbox.class_num = class_num
-        # Update the canvas label
         label = f"{class_num}: {self.loader.class_mapping.get(class_num, str(class_num))}"
-        self.canvas.itemconfigure(bbox.text_id, text=label)
+        color = self.editor.class_colors.get(class_num, '#555555')
+        self.canvas.itemconfigure(bbox.text_id, text=label, fill=color)
+        self.canvas.itemconfigure(bbox.rect_id, outline=color)
         self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
         self.view.update_info_bar(f"Changed to {class_num}: {label}")
 
@@ -148,38 +154,26 @@ class ImageViewerController:
                 f.write(yolo_bbox + "\n")
         self.view.update_info_bar("Saved successfully.")
 
-    def open_video_importer(self):
-        """Opens the video importer window. Auto-switches to the output folder on completion."""
-        VideoImporter(self.root, on_import_done=self._on_import_done)
+    def _apply_project_config(self, folder):
+        """Loads project.json for the given folder and applies class names and colours."""
+        config = ProjectManager.load_project_config(folder)
+        if config:
+            class_list = config.get('classes', [])
+            self.loader.class_mapping = {c['id']: c['name'] for c in class_list}
+            self.editor.class_colors = {c['id']: c['color'] for c in class_list}
+        else:
+            self.editor.class_colors = {}
 
-    def _on_import_done(self, folder):
-        """Called by VideoImporter after a successful import."""
-        try:
-            new_loader = ImageLoader(folder)
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not load imported folder:\n{e}")
-            return
-        self.folder = folder
-        self.loader = new_loader
-        self.editor.class_mapping = self.loader.class_mapping
-        self.current_index = self.loader.load_last_image_index()
-        self.action_stack.clear()
-        self.view.populate_class_list(self.loader.class_mapping)
-        self.show_image()
-        self.view.update_info_bar("Import complete. Folder loaded.")
-
-    def open_folder(self):
-        """Opens a folder picker and reloads the application with the selected dataset folder."""
-        folder = filedialog.askdirectory(title="Select Dataset Folder")
-        if not folder:
-            return
+    def _load_folder(self, folder):
+        """Reinitialises loader and editor state for a new folder. Returns True on success."""
         try:
             new_loader = ImageLoader(folder)
         except Exception as e:
             messagebox.showerror("Error", f"Could not load folder:\n{e}")
-            return
+            return False
         self.folder = folder
         self.loader = new_loader
+        self._apply_project_config(folder)
         self.editor.class_mapping = self.loader.class_mapping
         self.current_index = self.loader.load_last_image_index()
         self.action_stack.clear()
@@ -188,6 +182,32 @@ class ImageViewerController:
         self.show_image()
         if cleaned:
             self.view.update_info_bar(f"Cleaned {cleaned} corrupted label file(s).")
+        return True
+
+    def open_project_wizard(self):
+        """Opens the New Project wizard."""
+        ProjectWizard(self.root, on_project_created=self._on_project_created)
+
+    def _on_project_created(self, first_set_path):
+        """Called by ProjectWizard after a project is saved; loads the first image set."""
+        self._load_folder(first_set_path)
+        self.view.update_info_bar("Project created and loaded.")
+
+    def open_video_importer(self):
+        """Opens the video importer window. Auto-switches to the output folder on completion."""
+        VideoImporter(self.root, on_import_done=self._on_import_done)
+
+    def _on_import_done(self, folder):
+        """Called by VideoImporter after a successful import."""
+        if self._load_folder(folder):
+            self.view.update_info_bar("Import complete. Folder loaded.")
+
+    def open_folder(self):
+        """Opens a folder picker and reloads the application with the selected dataset folder."""
+        folder = filedialog.askdirectory(title="Select Dataset Folder")
+        if not folder:
+            return
+        self._load_folder(folder)
 
     def toggle_autosave(self):
         self.autosave = not self.autosave

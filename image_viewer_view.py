@@ -60,10 +60,25 @@ class ImageViewerView:
         # Top third: class legend
         class_frame = tk.LabelFrame(paned, text="Classes", font=("Helvetica", 9, "bold"))
         paned.add(class_frame, height=250)
-        self.class_listbox = tk.Listbox(class_frame, font=("Helvetica", 9), selectmode=tk.SINGLE,
-                                        bd=0, highlightthickness=0)
-        self.class_listbox.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
-        self.class_listbox.bind('<<ListboxSelect>>', self._on_class_select)
+
+        class_canvas = tk.Canvas(class_frame, bd=0, highlightthickness=0)
+        class_scroll = tk.Scrollbar(class_frame, orient='vertical', command=class_canvas.yview)
+        class_canvas.configure(yscrollcommand=class_scroll.set)
+        class_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        class_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._class_list_frame = tk.Frame(class_canvas)
+        self._class_canvas_win = class_canvas.create_window(
+            (0, 0), window=self._class_list_frame, anchor='nw')
+        self._class_list_frame.bind(
+            "<Configure>",
+            lambda e: class_canvas.configure(scrollregion=class_canvas.bbox("all")))
+        class_canvas.bind(
+            "<Configure>",
+            lambda e: class_canvas.itemconfig(self._class_canvas_win, width=e.width))
+        self._class_canvas = class_canvas
+        self._class_rows = []      # list of {num, frame, label}
+        self._selected_class = 0
 
         # Bottom two thirds: annotation list
         annotation_frame = tk.LabelFrame(paned, text="Annotations", font=("Helvetica", 9, "bold"))
@@ -129,16 +144,18 @@ class ImageViewerView:
         self.controller.add_tooltip(self.btn_undo, "Shortcut: ctrl + z")
 
 
-    def _on_class_select(self, event):
-        selection = self.class_listbox.curselection()
-        if selection:
-            self.controller.set_current_class(selection[0])
+    def _on_class_row_click(self, class_num):
+        self.select_class(class_num)
+        self.controller.set_current_class(class_num)
 
     def select_class(self, class_num):
-        """Highlight the given class in the class listbox."""
-        self.class_listbox.selection_clear(0, tk.END)
-        self.class_listbox.selection_set(class_num)
-        self.class_listbox.see(class_num)
+        """Highlight the selected class row."""
+        self._selected_class = class_num
+        for row_info in self._class_rows:
+            is_selected = row_info['num'] == class_num
+            bg = '#cce8ff' if is_selected else 'white'
+            row_info['frame'].config(bg=bg)
+            row_info['label'].config(bg=bg)
 
     def _on_annotation_select(self, event):
         selection = self.annotation_listbox.curselection()
@@ -150,12 +167,27 @@ class ImageViewerView:
         if selection:
             self.controller.delete_annotation_by_index(selection[0])
 
-    def populate_class_list(self, class_mapping):
-        """Populate the class legend with class numbers and names."""
-        self.class_listbox.delete(0, tk.END)
+    def populate_class_list(self, class_mapping, class_colors=None):
+        """Populate the class legend with colour swatches, IDs and names."""
+        if class_colors is None:
+            class_colors = {}
+        for widget in self._class_list_frame.winfo_children():
+            widget.destroy()
+        self._class_rows = []
         for num, name in class_mapping.items():
-            self.class_listbox.insert(tk.END, f"{num}: {name}")
-        self.class_listbox.selection_set(0)
+            color = class_colors.get(num, '#555555')
+            row = tk.Frame(self._class_list_frame, bg='white', cursor='hand2')
+            row.pack(fill=tk.X)
+            swatch = tk.Label(row, bg=color, width=2, relief=tk.RAISED)
+            swatch.pack(side=tk.LEFT, padx=(6, 5), pady=4, ipady=5)
+            label = tk.Label(row, text=f"{num}: {name}", anchor='w',
+                             font=("Helvetica", 9), bg='white')
+            label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            for widget in (row, swatch, label):
+                widget.bind('<Button-1>', lambda e, n=num: self._on_class_row_click(n))
+            self._class_rows.append({'num': num, 'frame': row, 'label': label})
+        if self._class_rows:
+            self.select_class(0)
 
     def update_annotation_list(self, bboxes, class_names):
         """Update the annotation list for the current image."""

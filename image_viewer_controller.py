@@ -41,7 +41,7 @@ class ImageViewerController:
         # Bind keyboard shortcuts
         self.bind_shortcuts()
 
-        self.view.populate_class_list(self.loader.class_mapping)
+        self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
         cleaned = self.loader.clean_label_files()
         self.show_image()
         if cleaned:
@@ -179,7 +179,7 @@ class ImageViewerController:
         self.current_index = self.loader.load_last_image_index()
         self.action_stack.clear()
         AppConfig.set_last_folder(folder)
-        self.view.populate_class_list(self.loader.class_mapping)
+        self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
         cleaned = self.loader.clean_label_files()
         self.show_image()
         if cleaned:

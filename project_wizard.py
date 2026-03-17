@@ -44,7 +44,7 @@ class ProjectWizard:
         self.frame1 = tk.Frame(self.window)
         pad = {'padx': 14, 'pady': 6}
 
-        tk.Label(self.frame1, text="New Project — Step 1 of 2",
+        tk.Label(self.frame1, text="New Project: Step 1 of 2",
                  font=("Helvetica", 12, "bold")).pack(anchor='w', **pad)
         tk.Frame(self.frame1, height=1, bg='lightgray').pack(fill=tk.X, padx=14)
 
@@ -184,7 +184,7 @@ class ProjectWizard:
         self.frame2 = tk.Frame(self.window)
         pad = {'padx': 14, 'pady': 6}
 
-        tk.Label(self.frame2, text="New Project — Step 2 of 2",
+        tk.Label(self.frame2, text="New Project: Step 2 of 2",
                  font=("Helvetica", 12, "bold")).pack(anchor='w', **pad)
         tk.Frame(self.frame2, height=1, bg='lightgray').pack(fill=tk.X, padx=14)
 

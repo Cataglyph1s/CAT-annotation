@@ -1,6 +1,7 @@
 from image_loader import ImageLoader
 from bbox_editor import BoundingBoxEditor
 from image_viewer_view import ImageViewerView
+from video_importer import VideoImporter
 
 import tkinter as tk
 from tkinter import messagebox, filedialog
@@ -143,6 +144,26 @@ class ImageViewerController:
                 yolo_bbox = bbox.to_normalized(img_width, img_height)
                 f.write(yolo_bbox + "\n")
         self.view.update_info_bar("Saved successfully.")
+
+    def open_video_importer(self):
+        """Opens the video importer window. Auto-switches to the output folder on completion."""
+        VideoImporter(self.root, on_import_done=self._on_import_done)
+
+    def _on_import_done(self, folder):
+        """Called by VideoImporter after a successful import."""
+        try:
+            new_loader = ImageLoader(folder)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not load imported folder:\n{e}")
+            return
+        self.folder = folder
+        self.loader = new_loader
+        self.editor.class_mapping = self.loader.class_mapping
+        self.current_index = self.loader.load_last_image_index()
+        self.action_stack.clear()
+        self.view.populate_class_list(self.loader.class_mapping)
+        self.show_image()
+        self.view.update_info_bar("Import complete. Folder loaded.")
 
     def open_folder(self):
         """Opens a folder picker and reloads the application with the selected dataset folder."""

@@ -21,6 +21,7 @@ class ImageViewerView:
         self.app_menu = tk.Menu(self.menu_button, tearoff=0)
         self.menu_button.config(menu=self.app_menu)
         self.app_menu.add_command(label="Open Folder...", command=self.controller.open_folder)
+        self.app_menu.add_command(label="Import Video...", command=self.controller.open_video_importer)
 
         # Info bar at the bottom
         info_frame = tk.Frame(root, relief=tk.SUNKEN, bd=1, bg='lightgray')

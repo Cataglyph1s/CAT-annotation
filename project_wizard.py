@@ -5,6 +5,7 @@ from tkinter import filedialog, messagebox, colorchooser
 
 from project_manager import ProjectManager
 from video_importer import VideoImporter
+from app_config import AppConfig
 
 DEFAULT_COLORS = [
     '#E6194B', '#3CB44B', '#FFE119', '#4363D8', '#F58231',
@@ -30,6 +31,10 @@ class ProjectWizard:
         self._build_screen1()
         self._build_screen2()
         self._show_screen1()
+
+        program_root = AppConfig.get_program_root()
+        if program_root:
+            self.base_folder.set(program_root)
 
     # ------------------------------------------------------------------
     # Screen 1 — project name, location, classes

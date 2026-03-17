@@ -4,6 +4,7 @@ from image_viewer_view import ImageViewerView
 from video_importer import VideoImporter
 from project_manager import ProjectManager
 from project_wizard import ProjectWizard
+from app_config import AppConfig
 
 import tkinter as tk
 from tkinter import messagebox, filedialog
@@ -177,6 +178,7 @@ class ImageViewerController:
         self.editor.class_mapping = self.loader.class_mapping
         self.current_index = self.loader.load_last_image_index()
         self.action_stack.clear()
+        AppConfig.set_last_folder(folder)
         self.view.populate_class_list(self.loader.class_mapping)
         cleaned = self.loader.clean_label_files()
         self.show_image()

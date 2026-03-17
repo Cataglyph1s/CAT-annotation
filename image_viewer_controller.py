@@ -3,7 +3,7 @@ from bbox_editor import BoundingBoxEditor
 from image_viewer_view import ImageViewerView
 
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 
 
 class ImageViewerController:
@@ -143,6 +143,27 @@ class ImageViewerController:
                 yolo_bbox = bbox.to_normalized(img_width, img_height)
                 f.write(yolo_bbox + "\n")
         self.view.update_info_bar("Saved successfully.")
+
+    def open_folder(self):
+        """Opens a folder picker and reloads the application with the selected dataset folder."""
+        folder = filedialog.askdirectory(title="Select Dataset Folder")
+        if not folder:
+            return
+        try:
+            new_loader = ImageLoader(folder)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not load folder:\n{e}")
+            return
+        self.folder = folder
+        self.loader = new_loader
+        self.editor.class_mapping = self.loader.class_mapping
+        self.current_index = self.loader.load_last_image_index()
+        self.action_stack.clear()
+        self.view.populate_class_list(self.loader.class_mapping)
+        cleaned = self.loader.clean_label_files()
+        self.show_image()
+        if cleaned:
+            self.view.update_info_bar(f"Cleaned {cleaned} corrupted label file(s).")
 
     def toggle_autosave(self):
         self.autosave = not self.autosave

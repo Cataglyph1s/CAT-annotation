@@ -11,6 +11,17 @@ class ImageViewerView:
         self.root.minsize(800, 600)
         self.root.geometry("1200x800")
 
+        # Top bar with menu button
+        top_frame = tk.Frame(root, bg='lightgray', relief=tk.FLAT, bd=1)
+        top_frame.pack(side=tk.TOP, fill=tk.X)
+        self.menu_button = tk.Menubutton(top_frame, text="☰", relief=tk.FLAT,
+                                         bg='lightgray', font=("Helvetica", 11),
+                                         padx=8, pady=2)
+        self.menu_button.pack(side=tk.LEFT)
+        self.app_menu = tk.Menu(self.menu_button, tearoff=0)
+        self.menu_button.config(menu=self.app_menu)
+        self.app_menu.add_command(label="Open Folder...", command=self.controller.open_folder)
+
         # Info bar at the bottom
         info_frame = tk.Frame(root, relief=tk.SUNKEN, bd=1, bg='lightgray')
         info_frame.pack(side=tk.BOTTOM, fill=tk.X)

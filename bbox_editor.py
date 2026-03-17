@@ -116,9 +116,11 @@ class BoundingBoxEditor:
         scaled_y2 = bbox.y2 * scale_factor + y_offset
 
         # Draw the rectangle
-        label = self.class_mapping.get(int(bbox.class_num), str(int(bbox.class_num)))
+        class_id = int(bbox.class_num)
+        class_name = self.class_mapping.get(class_id, str(class_id))
+        label = f"{class_id}: {class_name}"
         rect = self.canvas.create_rectangle(scaled_x1, scaled_y1, scaled_x2, scaled_y2, outline="red", width=2, tags="annotation")
-        text = self.canvas.create_text(scaled_x1, scaled_y1 - 10, anchor=tk.NW, text=label, fill="red", tags="annotation")
+        text = self.canvas.create_text(scaled_x1, scaled_y1 - 4, anchor=tk.SW, text=label, fill="red", tags="annotation")
         bbox.rect_id = rect
         bbox.text_id = text
 
@@ -226,7 +228,7 @@ class BoundingBoxEditor:
         sx2 = bbox.x2 * self.scale_factor + self.x_offset
         sy2 = bbox.y2 * self.scale_factor + self.y_offset
         self.canvas.coords(bbox.rect_id, sx1, sy1, sx2, sy2)
-        self.canvas.coords(bbox.text_id, sx1, sy1 - 10)
+        self.canvas.coords(bbox.text_id, sx1, sy1 - 4)
         # Move handles to new corner positions
         r = 6
         corners = [(bbox.x1, bbox.y1), (bbox.x2, bbox.y1),

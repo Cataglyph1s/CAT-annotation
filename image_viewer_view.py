@@ -35,15 +35,17 @@ class ImageViewerView:
         self.bottom_frame = tk.Frame(root)
         self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
 
-        # Auto-save button anchored to the bottom left
+        self.bottom_frame.columnconfigure(1, weight=1)
+
+        # Auto-save pinned to the bottom left
         self.btn_autosave = tk.Button(self.bottom_frame, text="Auto-Save: ON",
                                       command=self.controller.toggle_autosave,
                                       width=14, height=2, bg="lightgreen", relief=tk.RAISED)
-        self.btn_autosave.pack(side=tk.LEFT, padx=(0, 20))
+        self.btn_autosave.grid(row=0, column=0, sticky='w', padx=(0, 10))
 
-        # Button bar to the right of autosave
+        # Centre button bar
         self.button_frame = tk.Frame(self.bottom_frame)
-        self.button_frame.pack(side=tk.LEFT)
+        self.button_frame.grid(row=0, column=1)
 
         # Right panel directly on root, packed before canvas
         self.right_panel = tk.Frame(root, width=200, relief=tk.RIDGE, bd=2)
@@ -78,50 +80,51 @@ class ImageViewerView:
     def create_buttons(self):
         btn_cfg = {"height": 2, "bg": "white", "relief": tk.RAISED}
 
+        self.btn_edit = tk.Button(self.button_frame, text="Edit Mode",
+                                  command=self.controller.toggle_edit_mode, width=10, **btn_cfg)
+        self.btn_edit.grid(row=0, column=0, padx=5)
+        self.controller.add_tooltip(self.btn_edit, "Shortcut: e")
+
         self.btn_prev = tk.Button(self.button_frame, text="<< Prev",
                                   command=self.controller.show_prev_image, width=10, **btn_cfg)
-        self.btn_prev.grid(row=0, column=0, padx=5)
+        self.btn_prev.grid(row=0, column=1, padx=5)
         self.controller.add_tooltip(self.btn_prev, "Shortcut: a")
 
         self.btn_next = tk.Button(self.button_frame, text="Next >>",
                                   command=self.controller.show_next_image, width=10, **btn_cfg)
-        self.btn_next.grid(row=0, column=1, padx=5)
+        self.btn_next.grid(row=0, column=2, padx=5)
         self.controller.add_tooltip(self.btn_next, "Shortcut: d")
-
-        self.btn_edit = tk.Button(self.button_frame, text="Edit Mode",
-                                  command=self.controller.toggle_edit_mode, width=10, **btn_cfg)
-        self.btn_edit.grid(row=0, column=2, padx=5)
-        self.controller.add_tooltip(self.btn_edit, "Shortcut: e")
 
         self.btn_show_annotations = tk.Button(self.button_frame, text="Show Annotations",
                                               command=self.show_annotations, width=16, **btn_cfg)
         self.btn_show_annotations.grid(row=0, column=3, padx=5)
         self.controller.add_tooltip(self.btn_show_annotations, "Toggle annotation visibility")
 
-        self.btn_delete_bbox = tk.Button(self.button_frame, text="Delete BBox",
-                                         command=self.controller.delete_selected_bbox, width=12, **btn_cfg)
-        self.btn_delete_bbox.grid(row=0, column=4, padx=5)
-        self.controller.add_tooltip(self.btn_delete_bbox, "Shortcut: g")
-
-        self.btn_undo = tk.Button(self.button_frame, text="Undo",
-                                  command=self.controller.undo_last_action, width=8, **btn_cfg)
-        self.btn_undo.grid(row=0, column=5, padx=5)
-        self.controller.add_tooltip(self.btn_undo, "Shortcut: ctrl + z")
-
         self.btn_save = tk.Button(self.button_frame, text="Save",
                                   command=self.controller.save_bounding_boxes, width=8, **btn_cfg)
-        self.btn_save.grid(row=0, column=6, padx=5)
+        self.btn_save.grid(row=0, column=4, padx=(20, 5))
         self.controller.add_tooltip(self.btn_save, "Shortcut: ctrl + s")
+
+        self.btn_delete_bbox = tk.Button(self.button_frame, text="Delete BBox",
+                                         command=self.controller.delete_selected_bbox, width=12, **btn_cfg)
+        self.btn_delete_bbox.grid(row=0, column=5, padx=5)
+        self.controller.add_tooltip(self.btn_delete_bbox, "Shortcut: g")
+
+        self.btn_delete = tk.Button(self.button_frame, text="Delete Image",
+                                    command=self.controller.delete_current_image, width=12, **btn_cfg)
+        self.btn_delete.grid(row=0, column=6, padx=5)
+        self.controller.add_tooltip(self.btn_delete, "Shortcut: ctrl + b")
 
         self.btn_fullscreen = tk.Button(self.button_frame, text="Fullscreen",
                                         command=self.controller.toggle_fullscreen, width=10, **btn_cfg)
         self.btn_fullscreen.grid(row=0, column=7, padx=5)
         self.controller.add_tooltip(self.btn_fullscreen, "Shortcut: q")
 
-        self.btn_delete = tk.Button(self.button_frame, text="Delete Image",
-                                    command=self.controller.delete_current_image, width=12, **btn_cfg)
-        self.btn_delete.grid(row=0, column=8, padx=5)
-        self.controller.add_tooltip(self.btn_delete, "Shortcut: ctrl + b")
+        # Undo pinned to the bottom right
+        self.btn_undo = tk.Button(self.bottom_frame, text="Undo",
+                                  command=self.controller.undo_last_action, width=8, **btn_cfg)
+        self.btn_undo.grid(row=0, column=2, sticky='e', padx=(10, 0))
+        self.controller.add_tooltip(self.btn_undo, "Shortcut: ctrl + z")
 
 
     def _on_class_select(self, event):

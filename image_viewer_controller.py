@@ -95,6 +95,9 @@ class ImageViewerController:
         """Sets the active class and reassigns selected bbox if one is selected."""
         self.editor.current_class = class_num
         if self.editor.selected_bbox:
+            if not self.editor.edit_mode:
+                self.view.update_info_bar("Enable Edit Mode to change annotation class.")
+                return
             self.change_selected_bbox_class(class_num)
         else:
             self.view.update_info_bar(f"Class set to {class_num}: {self.loader.class_mapping[class_num]}")
@@ -104,7 +107,7 @@ class ImageViewerController:
         bbox = self.editor.selected_bbox
         bbox.class_num = class_num
         # Update the canvas label
-        label = self.loader.class_mapping.get(class_num, str(class_num))
+        label = f"{class_num}: {self.loader.class_mapping.get(class_num, str(class_num))}"
         self.canvas.itemconfigure(bbox.text_id, text=label)
         self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
         self.view.update_info_bar(f"Changed to {class_num}: {label}")
@@ -207,6 +210,9 @@ class ImageViewerController:
 
     def delete_annotation_by_index(self, index):
         """Deletes a bounding box by its index in the list."""
+        if not self.editor.edit_mode:
+            self.view.update_info_bar("Enable Edit Mode to delete annotations.")
+            return
         if 0 <= index < len(self.editor.bboxes):
             bbox = self.editor.bboxes[index]
             self.canvas.delete(bbox.rect_id)
@@ -218,11 +224,17 @@ class ImageViewerController:
 
     def delete_current_image(self):
         """Deletes the current image and its corresponding label."""
-        self.loader.delete_image(self.current_index)  # Deletes both the image and label
-        self.show_next_image()  # Shows the next image in the list
+        if not self.editor.edit_mode:
+            self.view.update_info_bar("Enable Edit Mode to delete images.")
+            return
+        self.loader.delete_image(self.current_index)
+        self.show_next_image()
 
     def delete_selected_bbox(self):
         """Deletes the selected bounding box and updates the file."""
+        if not self.editor.edit_mode:
+            self.view.update_info_bar("Enable Edit Mode to delete annotations.")
+            return
         if self.editor.selected_bbox:
             self.add_action("delete", self.editor.selected_bbox)
 

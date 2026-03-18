@@ -13,16 +13,14 @@ class ImageLoader:
         self.image_files.sort()
 
         self.class_mapping = {
-            0: "train",
-            1: "person",
-            2: "car",
-            3: "motorcycle",
-            4: "bicycle",
-            5: "forklift",
-            6: "truck",
-            7: "excavator",
-            8: "bus",
-            9: "railway"
+            0: "person",
+            1: "car",
+            2: "motorcycle",
+            3: "bicycle",
+            4: "forklift",
+            5: "truck",
+            6: "excavator",
+            7: "bus"
         }
 
     def get_image_and_label(self, index):

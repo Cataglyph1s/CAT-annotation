@@ -58,3 +58,35 @@ class ProjectManager:
         count = len([d for d in existing
                      if d.startswith("set_") and os.path.isdir(os.path.join(project_path, d))])
         return f"set_{count + 1:03d}"
+
+    @staticmethod
+    def list_sets(project_path):
+        """Returns sorted list of set folder paths that contain an images/ subdirectory."""
+        sets = []
+        try:
+            for name in sorted(os.listdir(project_path)):
+                full = os.path.join(project_path, name)
+                if os.path.isdir(full) and os.path.exists(os.path.join(full, 'images')):
+                    sets.append(full)
+        except OSError:
+            pass
+        return sets
+
+    @staticmethod
+    def get_set_stats(set_path):
+        """Returns (total_images, annotated_images) for a set folder."""
+        img_exts = {'.jpg', '.jpeg', '.png'}
+        images_dir = os.path.join(set_path, 'images')
+        labels_dir = os.path.join(set_path, 'labels')
+        total = 0
+        if os.path.exists(images_dir):
+            total = sum(1 for f in os.listdir(images_dir)
+                        if os.path.splitext(f)[1].lower() in img_exts)
+        annotated = 0
+        if os.path.exists(labels_dir):
+            for fname in os.listdir(labels_dir):
+                if fname.endswith('.txt'):
+                    lp = os.path.join(labels_dir, fname)
+                    if os.path.getsize(lp) > 0:
+                        annotated += 1
+        return total, annotated

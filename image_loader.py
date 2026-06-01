@@ -1,29 +1,83 @@
 import os
 import json
 
+_DEFAULT_CLASS_MAPPING = {
+    0: "train", 1: "person", 2: "car", 3: "motorcycle",
+    4: "bicycle", 5: "forklift", 6: "truck", 7: "excavator",
+    8: "bus", 9: "railway",
+}
+
+
 class ImageLoader:
     def __init__(self, folder):
         self.folder = folder
-        self.images_folder = os.path.join(folder, "images")
-        self.labels_folder = os.path.join(folder, "labels")
-
+        self.images_folder, self.labels_folder = self._resolve_folders(folder)
         self.index_file = os.path.join(folder, "index.json")
+        self.image_files = sorted(
+            f for f in os.listdir(self.images_folder)
+            if f.lower().endswith(('.jpg', '.png', '.jpeg'))
+        )
+        self.class_mapping = self._load_class_mapping()
 
-        self.image_files = [f for f in os.listdir(self.images_folder) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
-        self.image_files.sort()
+    def _resolve_folders(self, folder):
+        """Return (images_folder, labels_folder) for any supported layout."""
+        images_subdir = os.path.join(folder, "images")
+        if os.path.isdir(images_subdir):
+            # Standard layout: folder/images/ + folder/labels/
+            return images_subdir, os.path.join(folder, "labels")
 
-        self.class_mapping = {
-            0: "train",
-            1: "person",
-            2: "car",
-            3: "motorcycle",
-            4: "bicycle",
-            5: "forklift",
-            6: "truck",
-            7: "excavator",
-            8: "bus",
-            9: "railway"
-        }
+        # Nested layout: .../images/subset/ → look for .../labels/subset/
+        parent = os.path.dirname(folder)
+        if os.path.basename(parent) == "images":
+            grandparent = os.path.dirname(parent)
+            subset = os.path.basename(folder)
+            labels_sibling = os.path.join(grandparent, "labels", subset)
+            if os.path.isdir(labels_sibling):
+                return folder, labels_sibling
+
+        # Flat layout: images and labels in the same folder
+        return folder, folder
+
+    def _load_class_mapping(self):
+        """Return class mapping from dataset.yaml if found, else the default."""
+        parent = os.path.dirname(self.folder)
+        grandparent = os.path.dirname(parent)
+        for directory in [self.folder, parent, grandparent]:
+            yaml_path = os.path.join(directory, "dataset.yaml")
+            if not os.path.exists(yaml_path):
+                continue
+            mapping = self._parse_yaml_names(yaml_path)
+            if mapping:
+                return mapping
+        return dict(_DEFAULT_CLASS_MAPPING)
+
+    @staticmethod
+    def _parse_yaml_names(yaml_path):
+        """Minimal parser for the 'names' block of a YOLO dataset.yaml."""
+        try:
+            with open(yaml_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+            in_names, result, list_idx = False, {}, 0
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith('names:'):
+                    in_names = True
+                    continue
+                if in_names:
+                    if stripped and not line[0].isspace():
+                        break
+                    if ':' in stripped:
+                        k, _, v = stripped.partition(':')
+                        try:
+                            result[int(k.strip())] = v.strip()
+                        except ValueError:
+                            pass
+                    elif stripped.startswith('- '):
+                        result[list_idx] = stripped[2:].strip()
+                        list_idx += 1
+            return result if result else None
+        except Exception:
+            return None
 
     def get_image_and_label(self, index):
         """Returns paths to the image and corresponding label based on the index."""

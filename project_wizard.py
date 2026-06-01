@@ -1,4 +1,5 @@
 import os
+import shutil
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, colorchooser
@@ -58,7 +59,7 @@ class ProjectWizard:
         # Location
         row = tk.Frame(self.frame1)
         row.pack(fill=tk.X, **pad)
-        tk.Label(row, text="Location:", width=14, anchor='w').pack(side=tk.LEFT)
+        tk.Label(row, text="/root:", width=14, anchor='w').pack(side=tk.LEFT)
         self.base_folder = tk.StringVar()
         tk.Entry(row, textvariable=self.base_folder, width=30).pack(side=tk.LEFT, padx=(0, 6))
         tk.Button(row, text="Browse", width=8, command=self._browse_base_folder).pack(side=tk.LEFT)
@@ -277,6 +278,8 @@ class ProjectWizard:
                       command=lambda p=set_path: self._import_video(p)).pack(side=tk.LEFT, padx=4, pady=4)
             tk.Label(row, text=f"{img_count} image(s)", fg='gray',
                      anchor='w').pack(side=tk.LEFT, padx=8)
+            tk.Button(row, text="Remove", width=7, fg='red',
+                      command=lambda p=set_path: self._remove_set(p)).pack(side=tk.RIGHT, padx=6, pady=4)
 
     def _count_images(self, set_path):
         images_dir = os.path.join(set_path, "images")
@@ -284,6 +287,23 @@ class ProjectWizard:
             return 0
         return len([f for f in os.listdir(images_dir)
                     if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
+
+    def _remove_set(self, set_path):
+        name = os.path.basename(set_path)
+        if not messagebox.askyesno(
+                "Remove set",
+                f"Remove '{name}' and delete its folder and all contents?",
+                parent=self.window):
+            return
+        try:
+            shutil.rmtree(set_path)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not delete folder:\n{e}", parent=self.window)
+            return
+        self._sets.remove(set_path)
+        self._refresh_set_rows()
+        self._refresh_set_suggestion()
+        self.set_status.config(text=f"Set '{name}' removed.")
 
     def _import_images(self, set_path):
         source = filedialog.askdirectory(parent=self.window, title="Select folder with images")

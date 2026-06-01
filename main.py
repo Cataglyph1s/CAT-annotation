@@ -31,10 +31,18 @@ def _ensure_program_root(root):
     return True
 
 
+def _is_valid_dataset_folder(path):
+    if not path or not os.path.isdir(path):
+        return False
+    if os.path.isdir(os.path.join(path, "images")):
+        return True
+    return any(f.lower().endswith(('.jpg', '.jpeg', '.png')) for f in os.listdir(path))
+
+
 def _get_startup_folder():
     """Returns the last used folder if still valid, otherwise None."""
     last = AppConfig.get_last_folder()
-    if last and os.path.isdir(last) and os.path.isdir(os.path.join(last, "images")):
+    if _is_valid_dataset_folder(last):
         return last
     return None
 

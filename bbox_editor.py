@@ -68,8 +68,9 @@ class BoundingBoxEditor:
         # Store original dimensions
         self.original_width, self.original_height = self.image.size
 
-        # Update the root to ensure the canvas size is accurate
-        self.root.update()
+        # update_idletasks processes layout/geometry only — avoids firing queued
+        # keypresses or slideshow timers mid-load which would corrupt autosave.
+        self.root.update_idletasks()
 
         # Get canvas size
         canvas_width = self.canvas.winfo_width()

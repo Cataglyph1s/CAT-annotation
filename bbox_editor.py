@@ -72,9 +72,12 @@ class BoundingBoxEditor:
         # keypresses or slideshow timers mid-load which would corrupt autosave.
         self.root.update_idletasks()
 
-        # Get canvas size
+        # Get canvas size; fall back to image dimensions if canvas isn't laid out yet
+        # (winfo_width returns 1 before the window is fully rendered).
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
+        if canvas_width <= 1 or canvas_height <= 1:
+            canvas_width, canvas_height = self.original_width, self.original_height
 
         # Calculate the scaling factor to maintain aspect ratio
         scale_factor = min(canvas_width / self.original_width, canvas_height / self.original_height)

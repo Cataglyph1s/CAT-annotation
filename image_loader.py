@@ -112,10 +112,6 @@ class ImageLoader:
         # Remove the file from the internal list of image files
         del self.image_files[index]
 
-    def has_images(self):
-        """Checks if there are any images available."""
-        return bool(self.image_files)
-
     def clean_label_files(self):
         """Remove duplicate and malformed lines from all label files."""
         cleaned = 0
@@ -133,7 +129,7 @@ class ImageLoader:
                 if len(parts) != 5:
                     continue
                 try:
-                    map(float, parts)
+                    [float(p) for p in parts]
                 except ValueError:
                     continue
                 if stripped not in seen:

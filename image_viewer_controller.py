@@ -483,7 +483,11 @@ class ImageViewerController:
             self.view.update_info_bar("Enable Edit Mode to delete images.")
             return
         self.loader.delete_image(self.current_index)
-        self.show_next_image()
+        # Clear bboxes before showing the next image so autosave cannot write
+        # the deleted image's annotations onto the file that now occupies this index.
+        self.editor.bboxes.clear()
+        self.current_index = min(self.current_index, self.loader.num_images() - 1)
+        self.show_image()
 
     def delete_selected_bbox(self):
         """Deletes the selected bounding box and updates the file."""

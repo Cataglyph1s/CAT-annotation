@@ -44,7 +44,7 @@ class BoundingBoxEditor:
 
     def on_resize(self, event):
         """Handle the window resizing, ensuring the image and bounding boxes scale to fit."""
-        if self.image:
+        if event.widget is self.root and self.image:
             self.load_image(self.image_path, self.label_path)
 
     def load_image(self, image_path, label_path=None, fullscreen=False):

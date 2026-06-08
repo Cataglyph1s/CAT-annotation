@@ -32,6 +32,8 @@ class BoundingBoxEditor:
         self._resize_bbox = None
         self._drag_corner = None
         self._resizing = False
+        self.occlude_mode = False
+        self.on_occluder_added = None  # callback(x1, y1, x2, y2) in image pixel coords
 
         # Bindings for bbox
         self.canvas.bind("<Button-1>", self.start_bbox)
@@ -132,6 +134,20 @@ class BoundingBoxEditor:
 
     def toggle_edit_mode(self):
         self.edit_mode = not self.edit_mode
+        if not self.edit_mode:
+            self.occlude_mode = False
+
+    def toggle_occlude_mode(self):
+        self.occlude_mode = not self.occlude_mode
+
+    def draw_occluder(self, x1, y1, x2, y2):
+        """Draw a filled white occluder rectangle on the canvas (image pixel coords)."""
+        sx1 = x1 * self.scale_factor + self.x_offset
+        sy1 = y1 * self.scale_factor + self.y_offset
+        sx2 = x2 * self.scale_factor + self.x_offset
+        sy2 = y2 * self.scale_factor + self.y_offset
+        self.canvas.create_rectangle(sx1, sy1, sx2, sy2,
+                                     fill='white', outline='#aaaaaa', width=1, tags='occluder')
 
     def start_bbox(self, event):
         if not self.edit_mode or self._resizing:
@@ -141,33 +157,38 @@ class BoundingBoxEditor:
     def draw_bbox(self, event):
         if not self.edit_mode or self.current_bbox is None:
             return
-
         self.current_bbox[2] = event.x
         self.current_bbox[3] = event.y
         self.canvas.delete("preview")
-        self.canvas.create_rectangle(self.current_bbox[0],
-                                     self.current_bbox[1],
-                                     self.current_bbox[2],
-                                     self.current_bbox[3],
-                                     outline="blue", width=2, tag="preview")
+        if self.occlude_mode:
+            self.canvas.create_rectangle(
+                self.current_bbox[0], self.current_bbox[1],
+                self.current_bbox[2], self.current_bbox[3],
+                fill='white', stipple='gray50', outline='orange', width=2, tag="preview")
+        else:
+            self.canvas.create_rectangle(
+                self.current_bbox[0], self.current_bbox[1],
+                self.current_bbox[2], self.current_bbox[3],
+                outline="blue", width=2, tag="preview")
 
     def save_bbox(self, event):
         if not self.edit_mode or self.current_bbox is None or self._resizing:
             return
-
         x1, y1, x2, y2 = self.current_bbox
-        class_num = self.current_class
         if self.original_width > 0 and self.original_height > 0:
-            # Convert canvas coords back to original image pixel coords
             orig_x1 = int((x1 - self.x_offset) / self.scale_factor)
             orig_y1 = int((y1 - self.y_offset) / self.scale_factor)
             orig_x2 = int((x2 - self.x_offset) / self.scale_factor)
             orig_y2 = int((y2 - self.y_offset) / self.scale_factor)
-            bbox = BoundingBox(orig_x1, orig_y1, orig_x2, orig_y2, class_num)
-            self.bboxes.append(bbox)
-            self.draw_bounding_box(bbox, self.x_offset, self.y_offset, self.scale_factor)
-            if self.on_bbox_added:
-                self.on_bbox_added()
+            if self.occlude_mode:
+                if self.on_occluder_added:
+                    self.on_occluder_added(orig_x1, orig_y1, orig_x2, orig_y2)
+            else:
+                bbox = BoundingBox(orig_x1, orig_y1, orig_x2, orig_y2, self.current_class)
+                self.bboxes.append(bbox)
+                self.draw_bounding_box(bbox, self.x_offset, self.y_offset, self.scale_factor)
+                if self.on_bbox_added:
+                    self.on_bbox_added()
         self.current_bbox = None
 
     def select_bbox(self, event):

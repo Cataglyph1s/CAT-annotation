@@ -78,7 +78,9 @@ class ImageViewerController:
     def bind_shortcuts(self):
         """Binds all keyboard shortcuts to their respective functions."""
         self.root.bind('<d>', lambda e: self.show_next_image())
+        self.root.bind('<p>', lambda e: self.show_next_image())
         self.root.bind('<a>', lambda e: self.show_prev_image())
+        self.root.bind('<o>', lambda e: self.show_prev_image())
         self.root.bind('<e>', lambda e: self.toggle_edit_mode())
         self.root.bind('<g>', lambda e: self.delete_selected_bbox())
         self.root.bind('<q>', lambda e: self.toggle_fullscreen())

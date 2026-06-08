@@ -107,6 +107,33 @@ class ImageViewerView:
         self._annotation_rows = []
         self._selected_annotation_idx = None
 
+        # Occluders panel
+        occluder_frame = tk.LabelFrame(paned, text="Occluders", font=("Helvetica", 9, "bold"))
+        paned.add(occluder_frame, height=160)
+
+        self.btn_burn_occluders = tk.Button(
+            occluder_frame, text="Burn to images_masked/",
+            command=self.controller.burn_occluders_to_masked,
+            bg='#fff3cd', relief=tk.RAISED, font=("Helvetica", 8))
+        self.btn_burn_occluders.pack(fill=tk.X, padx=4, pady=(4, 2))
+
+        occ_canvas = tk.Canvas(occluder_frame, bd=0, highlightthickness=0)
+        occ_scroll = tk.Scrollbar(occluder_frame, orient='vertical', command=occ_canvas.yview)
+        occ_canvas.configure(yscrollcommand=occ_scroll.set)
+        occ_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        occ_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._occ_list_frame = tk.Frame(occ_canvas)
+        self._occ_canvas_win = occ_canvas.create_window((0, 0), window=self._occ_list_frame, anchor='nw')
+        self._occ_list_frame.bind(
+            "<Configure>",
+            lambda e: occ_canvas.configure(scrollregion=occ_canvas.bbox("all")))
+        occ_canvas.bind(
+            "<Configure>",
+            lambda e: occ_canvas.itemconfig(self._occ_canvas_win, width=e.width))
+        self._occ_canvas = occ_canvas
+        self._occluder_rows = []
+
         # Left sidebar wrapper — always visible so the toggle strip persists when panel is hidden
         self._left_wrapper = tk.Frame(root)
         self._left_wrapper.pack(side=tk.LEFT, fill=tk.Y)
@@ -234,6 +261,12 @@ class ImageViewerView:
                                   command=self.controller.jump_to_image_by_number, **btn_cfg)
         self.btn_jump.pack(side=tk.LEFT, padx=4)
         self.controller.add_tooltip(self.btn_jump, "Shortcut: ctrl + g  |  Go to image by number")
+
+        self.btn_cover_mode = tk.Button(review_frame, text="Cover Mode", width=11,
+                                        command=self.controller.toggle_cover_mode, **btn_cfg)
+        self.btn_cover_mode.pack(side=tk.LEFT, padx=(12, 4))
+        self.controller.add_tooltip(self.btn_cover_mode,
+                                    "Shortcut: v  |  Draw white covers over static background objects")
 
 
     def _on_class_row_click(self, class_num):
@@ -449,3 +482,66 @@ class ImageViewerView:
         else:
             self.left_panel.pack_forget()
             self._toggle_label.config(text='▶')
+
+    # ------------------------------------------------------------------
+    # Occluder panel
+    # ------------------------------------------------------------------
+
+    def update_cover_mode_button(self, active):
+        if active:
+            self.btn_cover_mode.config(text="Covering...", bg="lightyellow", relief=tk.SUNKEN)
+        else:
+            self.btn_cover_mode.config(text="Cover Mode", bg="white", relief=tk.RAISED)
+
+    def update_occluder_list(self, occluder_rects, persistent_specs=None):
+        """Rebuild occluder rows for the current image."""
+        persistent_specs = persistent_specs or set()
+        for widget in self._occ_list_frame.winfo_children():
+            widget.destroy()
+        self._occluder_rows = []
+
+        for i, rect in enumerate(occluder_rects):
+            x1, y1, x2, y2 = rect
+            w, h = abs(x2 - x1), abs(y2 - y1)
+            pinned = rect in persistent_specs
+            bg = '#fffde7' if pinned else 'white'
+
+            row = tk.Frame(self._occ_list_frame, bg=bg)
+            row.pack(fill=tk.X)
+
+            pin_btn = tk.Button(
+                row, text='●' if pinned else '○',
+                fg='#cc8800' if pinned else 'gray',
+                font=("Helvetica", 9), width=2,
+                relief=tk.SUNKEN if pinned else tk.FLAT,
+                bd=1, bg=bg,
+                command=lambda idx=i: self.controller.toggle_occluder_persistent(idx)
+            )
+            pin_btn.pack(side=tk.LEFT, padx=(4, 2), pady=2)
+
+            lbl = tk.Label(row, text=f"{w}×{h}", anchor='w', font=("Helvetica", 9), bg=bg)
+            lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=2)
+
+            del_btn = tk.Button(
+                row, text='x', fg='red', font=("Helvetica", 9), width=2,
+                relief=tk.FLAT, bd=0, bg=bg,
+                command=lambda idx=i: self.controller.delete_occluder(idx)
+            )
+            del_btn.pack(side=tk.RIGHT, padx=(2, 4), pady=2)
+
+            self._occluder_rows.append(
+                {'frame': row, 'pin_btn': pin_btn, 'label': lbl, 'del_btn': del_btn, 'pinned': pinned})
+
+    def set_occluder_pinned(self, index, pinned):
+        if not (0 <= index < len(self._occluder_rows)):
+            return
+        row = self._occluder_rows[index]
+        row['pinned'] = pinned
+        bg = '#fffde7' if pinned else 'white'
+        for widget in (row['frame'], row['label'], row['pin_btn'], row['del_btn']):
+            widget.config(bg=bg)
+        row['pin_btn'].config(
+            text='●' if pinned else '○',
+            fg='#cc8800' if pinned else 'gray',
+            relief=tk.SUNKEN if pinned else tk.FLAT,
+        )

@@ -1,6 +1,7 @@
 import os
 import time
 
+from bounding_box import BoundingBox
 from image_loader import ImageLoader
 from bbox_editor import BoundingBoxEditor
 from image_viewer_view import ImageViewerView
@@ -35,6 +36,7 @@ class ImageViewerController:
         # Review state
         self._flagged_images = set()
         self._nav_times = []  # timestamps of recent show_image() calls for ETA
+        self._persistent_bboxes = set()  # (x1,y1,x2,y2,class_num) tuples pinned to carry across frames
 
         # Create view first — establishes bottom bar and content_frame
         self.view = ImageViewerView(root, self)
@@ -100,7 +102,7 @@ class ImageViewerController:
         self.loader.save_last_image_index(self.current_index)
         self.editor.annotations_visible = True
         self.view.update_annotations_button(True)
-        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
         self.view.update_path(image_path)
         filename = self.loader.image_files[self.current_index]
         self.view.update_flag_button(filename in self._flagged_images, len(self._flagged_images))
@@ -113,6 +115,7 @@ class ImageViewerController:
             self.save_bounding_boxes()
         self.current_index = (self.current_index + 1) % self.loader.num_images()
         self.show_image()
+        self._inject_persistent_bboxes()
 
     def show_prev_image(self):
         if self.loader is None:
@@ -121,6 +124,7 @@ class ImageViewerController:
             self.save_bounding_boxes()
         self.current_index = (self.current_index - 1) % self.loader.num_images()
         self.show_image()
+        self._inject_persistent_bboxes()
 
     def toggle_edit_mode(self):
         """Toggles between edit and view modes."""
@@ -146,12 +150,17 @@ class ImageViewerController:
     def change_selected_bbox_class(self, class_num):
         """Changes the class of the currently selected bounding box."""
         bbox = self.editor.selected_bbox
+        old_spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
         bbox.class_num = class_num
+        new_spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
+        if old_spec in self._persistent_bboxes:
+            self._persistent_bboxes.discard(old_spec)
+            self._persistent_bboxes.add(new_spec)
         label = f"{class_num}: {self.loader.class_mapping.get(class_num, str(class_num))}"
         color = self.editor.class_colors.get(class_num, '#555555')
         self.canvas.itemconfigure(bbox.text_id, text=label, fill=color)
         self.canvas.itemconfigure(bbox.rect_id, outline=color)
-        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
         self.view.update_info_bar(f"Changed to {class_num}: {label}")
 
     def toggle_fullscreen(self):
@@ -219,6 +228,7 @@ class ImageViewerController:
         self.action_stack.clear()
         self._flagged_images = self._load_flags()
         self._nav_times.clear()
+        self._persistent_bboxes.clear()
         AppConfig.set_last_folder(folder)
         self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
         if self.loader.num_images() < 5000:
@@ -377,6 +387,48 @@ class ImageViewerController:
             self.show_image()
 
     # ------------------------------------------------------------------
+    # Persistent annotations (pin-to-carry-forward)
+    # ------------------------------------------------------------------
+
+    def toggle_bbox_persistent(self, index):
+        """Pin or unpin a bbox so it is copied to every subsequent frame."""
+        if not (0 <= index < len(self.editor.bboxes)):
+            return
+        bbox = self.editor.bboxes[index]
+        spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
+        if spec in self._persistent_bboxes:
+            self._persistent_bboxes.discard(spec)
+            self.view.set_annotation_pinned(index, False)
+            self.view.update_info_bar("Annotation unpinned.")
+        else:
+            self._persistent_bboxes.add(spec)
+            self.view.set_annotation_pinned(index, True)
+            self.view.update_info_bar("Annotation pinned — will be copied to each new frame.")
+
+    def _inject_persistent_bboxes(self):
+        """Add any pinned bbox templates into the current frame if not already present."""
+        if not self._persistent_bboxes or self.loader is None:
+            return
+        existing = {
+            (b.x1, b.y1, b.x2, b.y2, int(b.class_num))
+            for b in self.editor.bboxes
+        }
+        added = False
+        for spec in self._persistent_bboxes:
+            if spec not in existing:
+                bbox = BoundingBox(spec[0], spec[1], spec[2], spec[3], spec[4])
+                self.editor.bboxes.append(bbox)
+                self.editor.draw_bounding_box(
+                    bbox, self.editor.x_offset, self.editor.y_offset, self.editor.scale_factor)
+                existing.add(spec)
+                added = True
+        if added:
+            self.view.update_annotation_list(
+                self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
+            if self.autosave:
+                self.save_bounding_boxes()
+
+    # ------------------------------------------------------------------
     # Sets sidebar
     # ------------------------------------------------------------------
 
@@ -448,7 +500,7 @@ class ImageViewerController:
     def _on_bbox_added(self):
         if self.loader is None:
             return
-        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
 
     def toggle_annotations(self):
         return self.editor.toggle_annotations()
@@ -468,11 +520,12 @@ class ImageViewerController:
             return
         if 0 <= index < len(self.editor.bboxes):
             bbox = self.editor.bboxes[index]
+            self._persistent_bboxes.discard((bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num)))
             self.canvas.delete(bbox.rect_id)
             self.canvas.delete(bbox.text_id)
             self.editor.bboxes.pop(index)
             self.editor.clear_resize_handles()
-            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
             self.view.update_info_bar("Deleted successfully.")
 
     def delete_current_image(self):
@@ -495,15 +548,17 @@ class ImageViewerController:
             self.view.update_info_bar("Enable Edit Mode to delete annotations.")
             return
         if self.editor.selected_bbox:
-            self.add_action("delete", self.editor.selected_bbox)
+            bbox = self.editor.selected_bbox
+            self._persistent_bboxes.discard((bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num)))
+            self.add_action("delete", bbox)
 
             # Remove from canvas and list
-            self.canvas.delete(self.editor.selected_bbox.rect_id)
-            self.canvas.delete(self.editor.selected_bbox.text_id)
-            self.editor.bboxes.remove(self.editor.selected_bbox)
+            self.canvas.delete(bbox.rect_id)
+            self.canvas.delete(bbox.text_id)
+            self.editor.bboxes.remove(bbox)
             self.editor.selected_bbox = None
             self.editor.clear_resize_handles()
-            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
             self.view.update_info_bar("Deleted successfully.")
         else:
             self.view.update_info_bar("No bounding box selected.")
@@ -526,8 +581,9 @@ class ImageViewerController:
         if action_type == "delete":
             self.editor.draw_bounding_box(bbox, self.editor.x_offset, self.editor.y_offset, self.editor.scale_factor)
             self.editor.bboxes.append(bbox)
-            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
 
         elif action_type == "add":
             self.canvas.delete(bbox.rect_id)
             self.editor.bboxes.remove(bbox)
+            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)

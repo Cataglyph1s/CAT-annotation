@@ -87,11 +87,52 @@ class ImageViewerView:
         # Bottom two thirds: annotation list
         annotation_frame = tk.LabelFrame(paned, text="Annotations", font=("Helvetica", 9, "bold"))
         paned.add(annotation_frame)
-        self.annotation_listbox = tk.Listbox(annotation_frame, font=("Helvetica", 9), selectmode=tk.SINGLE,
-                                             bd=0, highlightthickness=0)
-        self.annotation_listbox.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
-        self.annotation_listbox.bind('<Delete>', self._on_annotation_delete)
-        self.annotation_listbox.bind('<<ListboxSelect>>', self._on_annotation_select)
+
+        ann_canvas = tk.Canvas(annotation_frame, bd=0, highlightthickness=0)
+        ann_scroll = tk.Scrollbar(annotation_frame, orient='vertical', command=ann_canvas.yview)
+        ann_canvas.configure(yscrollcommand=ann_scroll.set)
+        ann_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        ann_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._ann_list_frame = tk.Frame(ann_canvas)
+        self._ann_canvas_win = ann_canvas.create_window((0, 0), window=self._ann_list_frame, anchor='nw')
+        self._ann_list_frame.bind(
+            "<Configure>",
+            lambda e: ann_canvas.configure(scrollregion=ann_canvas.bbox("all")))
+        ann_canvas.bind(
+            "<Configure>",
+            lambda e: ann_canvas.itemconfig(self._ann_canvas_win, width=e.width))
+        ann_canvas.bind('<Delete>', self._on_annotation_delete)
+        self._ann_canvas = ann_canvas
+        self._annotation_rows = []
+        self._selected_annotation_idx = None
+
+        # Occluders panel
+        occluder_frame = tk.LabelFrame(paned, text="Occluders", font=("Helvetica", 9, "bold"))
+        paned.add(occluder_frame, height=160)
+
+        self.btn_burn_occluders = tk.Button(
+            occluder_frame, text="Burn to images_masked/",
+            command=self.controller.burn_occluders_to_masked,
+            bg='#fff3cd', relief=tk.RAISED, font=("Helvetica", 8))
+        self.btn_burn_occluders.pack(fill=tk.X, padx=4, pady=(4, 2))
+
+        occ_canvas = tk.Canvas(occluder_frame, bd=0, highlightthickness=0)
+        occ_scroll = tk.Scrollbar(occluder_frame, orient='vertical', command=occ_canvas.yview)
+        occ_canvas.configure(yscrollcommand=occ_scroll.set)
+        occ_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        occ_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._occ_list_frame = tk.Frame(occ_canvas)
+        self._occ_canvas_win = occ_canvas.create_window((0, 0), window=self._occ_list_frame, anchor='nw')
+        self._occ_list_frame.bind(
+            "<Configure>",
+            lambda e: occ_canvas.configure(scrollregion=occ_canvas.bbox("all")))
+        occ_canvas.bind(
+            "<Configure>",
+            lambda e: occ_canvas.itemconfig(self._occ_canvas_win, width=e.width))
+        self._occ_canvas = occ_canvas
+        self._occluder_rows = []
 
         # Left sidebar wrapper — always visible so the toggle strip persists when panel is hidden
         self._left_wrapper = tk.Frame(root)
@@ -221,6 +262,12 @@ class ImageViewerView:
         self.btn_jump.pack(side=tk.LEFT, padx=4)
         self.controller.add_tooltip(self.btn_jump, "Shortcut: ctrl + g  |  Go to image by number")
 
+        self.btn_cover_mode = tk.Button(review_frame, text="Cover Mode", width=11,
+                                        command=self.controller.toggle_cover_mode, **btn_cfg)
+        self.btn_cover_mode.pack(side=tk.LEFT, padx=(12, 4))
+        self.controller.add_tooltip(self.btn_cover_mode,
+                                    "Shortcut: v  |  Draw white covers over static background objects")
+
 
     def _on_class_row_click(self, class_num):
         self.select_class(class_num)
@@ -235,15 +282,27 @@ class ImageViewerView:
             row_info['frame'].config(bg=bg)
             row_info['label'].config(bg=bg)
 
-    def _on_annotation_select(self, event):
-        selection = self.annotation_listbox.curselection()
-        if selection:
-            self.controller.select_annotation_by_index(selection[0])
+    def _on_annotation_select_idx(self, idx):
+        self._selected_annotation_idx = idx
+        self._ann_canvas.focus_set()
+        self._highlight_annotation_row(idx)
+        self.controller.select_annotation_by_index(idx)
+
+    def _highlight_annotation_row(self, selected_idx):
+        for i, row_info in enumerate(self._annotation_rows):
+            if i == selected_idx:
+                bg = '#cce8ff'
+            elif row_info.get('pinned', False):
+                bg = '#eef4ff'
+            else:
+                bg = 'white'
+            row_info['frame'].config(bg=bg)
+            row_info['label'].config(bg=bg)
+            row_info['pin_btn'].config(bg=bg)
 
     def _on_annotation_delete(self, event):
-        selection = self.annotation_listbox.curselection()
-        if selection:
-            self.controller.delete_annotation_by_index(selection[0])
+        if self._selected_annotation_idx is not None:
+            self.controller.delete_annotation_by_index(self._selected_annotation_idx)
 
     def populate_class_list(self, class_mapping, class_colors=None):
         """Populate the class legend with colour swatches, IDs and names."""
@@ -267,12 +326,60 @@ class ImageViewerView:
         if self._class_rows:
             self.select_class(0)
 
-    def update_annotation_list(self, bboxes, class_names):
-        """Update the annotation list for the current image."""
-        self.annotation_listbox.delete(0, tk.END)
+    def update_annotation_list(self, bboxes, class_names, pinned_specs=None):
+        """Rebuild annotation rows. pinned_specs is a set of (x1,y1,x2,y2,class_num) tuples."""
+        pinned_specs = pinned_specs or set()
+        for widget in self._ann_list_frame.winfo_children():
+            widget.destroy()
+        self._annotation_rows = []
+        self._selected_annotation_idx = None
+
         for i, bbox in enumerate(bboxes):
-            class_name = class_names[int(bbox.class_num)] if int(bbox.class_num) < len(class_names) else str(bbox.class_num)
-            self.annotation_listbox.insert(tk.END, f"{i + 1}: {class_name}")
+            class_name = (class_names[int(bbox.class_num)]
+                          if int(bbox.class_num) < len(class_names) else str(bbox.class_num))
+            spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
+            pinned = spec in pinned_specs
+            bg = '#eef4ff' if pinned else 'white'
+
+            row = tk.Frame(self._ann_list_frame, bg=bg, cursor='hand2')
+            row.pack(fill=tk.X)
+
+            pin_btn = tk.Button(
+                row, text='●' if pinned else '○',
+                fg='#2266cc' if pinned else 'gray',
+                font=("Helvetica", 9), width=2,
+                relief=tk.SUNKEN if pinned else tk.FLAT,
+                bd=1, bg=bg,
+                command=lambda idx=i: self.controller.toggle_bbox_persistent(idx)
+            )
+            pin_btn.pack(side=tk.LEFT, padx=(4, 2), pady=2)
+
+            lbl = tk.Label(row, text=f"{i + 1}: {class_name}", anchor='w',
+                           font=("Helvetica", 9), bg=bg)
+            lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=2)
+
+            row_info = {'frame': row, 'pin_btn': pin_btn, 'label': lbl, 'pinned': pinned}
+            self._annotation_rows.append(row_info)
+
+            for w in (row, lbl):
+                w.bind('<Button-1>', lambda e, idx=i: self._on_annotation_select_idx(idx))
+
+    def set_annotation_pinned(self, index, pinned):
+        """Update the pin button appearance for a single annotation row."""
+        if not (0 <= index < len(self._annotation_rows)):
+            return
+        row = self._annotation_rows[index]
+        row['pinned'] = pinned
+        is_selected = (index == self._selected_annotation_idx)
+        bg = '#cce8ff' if is_selected else ('#eef4ff' if pinned else 'white')
+        row['frame'].config(bg=bg)
+        row['label'].config(bg=bg)
+        row['pin_btn'].config(
+            text='●' if pinned else '○',
+            fg='#2266cc' if pinned else 'gray',
+            relief=tk.SUNKEN if pinned else tk.FLAT,
+            bg=bg
+        )
 
     def show_annotations(self):
         """Toggle bounding box visibility on the current image."""
@@ -375,3 +482,66 @@ class ImageViewerView:
         else:
             self.left_panel.pack_forget()
             self._toggle_label.config(text='▶')
+
+    # ------------------------------------------------------------------
+    # Occluder panel
+    # ------------------------------------------------------------------
+
+    def update_cover_mode_button(self, active):
+        if active:
+            self.btn_cover_mode.config(text="Covering...", bg="lightyellow", relief=tk.SUNKEN)
+        else:
+            self.btn_cover_mode.config(text="Cover Mode", bg="white", relief=tk.RAISED)
+
+    def update_occluder_list(self, occluder_rects, persistent_specs=None):
+        """Rebuild occluder rows for the current image."""
+        persistent_specs = persistent_specs or set()
+        for widget in self._occ_list_frame.winfo_children():
+            widget.destroy()
+        self._occluder_rows = []
+
+        for i, rect in enumerate(occluder_rects):
+            x1, y1, x2, y2 = rect
+            w, h = abs(x2 - x1), abs(y2 - y1)
+            pinned = rect in persistent_specs
+            bg = '#fffde7' if pinned else 'white'
+
+            row = tk.Frame(self._occ_list_frame, bg=bg)
+            row.pack(fill=tk.X)
+
+            pin_btn = tk.Button(
+                row, text='●' if pinned else '○',
+                fg='#cc8800' if pinned else 'gray',
+                font=("Helvetica", 9), width=2,
+                relief=tk.SUNKEN if pinned else tk.FLAT,
+                bd=1, bg=bg,
+                command=lambda idx=i: self.controller.toggle_occluder_persistent(idx)
+            )
+            pin_btn.pack(side=tk.LEFT, padx=(4, 2), pady=2)
+
+            lbl = tk.Label(row, text=f"{w}×{h}", anchor='w', font=("Helvetica", 9), bg=bg)
+            lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=2)
+
+            del_btn = tk.Button(
+                row, text='x', fg='red', font=("Helvetica", 9), width=2,
+                relief=tk.FLAT, bd=0, bg=bg,
+                command=lambda idx=i: self.controller.delete_occluder(idx)
+            )
+            del_btn.pack(side=tk.RIGHT, padx=(2, 4), pady=2)
+
+            self._occluder_rows.append(
+                {'frame': row, 'pin_btn': pin_btn, 'label': lbl, 'del_btn': del_btn, 'pinned': pinned})
+
+    def set_occluder_pinned(self, index, pinned):
+        if not (0 <= index < len(self._occluder_rows)):
+            return
+        row = self._occluder_rows[index]
+        row['pinned'] = pinned
+        bg = '#fffde7' if pinned else 'white'
+        for widget in (row['frame'], row['label'], row['pin_btn'], row['del_btn']):
+            widget.config(bg=bg)
+        row['pin_btn'].config(
+            text='●' if pinned else '○',
+            fg='#cc8800' if pinned else 'gray',
+            relief=tk.SUNKEN if pinned else tk.FLAT,
+        )

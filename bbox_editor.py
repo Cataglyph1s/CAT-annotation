@@ -32,6 +32,8 @@ class BoundingBoxEditor:
         self._resize_bbox = None
         self._drag_corner = None
         self._resizing = False
+        self.occlude_mode = False
+        self.on_occluder_added = None  # callback(x1, y1, x2, y2) in image pixel coords
 
         # Bindings for bbox
         self.canvas.bind("<Button-1>", self.start_bbox)
@@ -44,7 +46,7 @@ class BoundingBoxEditor:
 
     def on_resize(self, event):
         """Handle the window resizing, ensuring the image and bounding boxes scale to fit."""
-        if self.image:
+        if event.widget is self.root and self.image:
             self.load_image(self.image_path, self.label_path)
 
     def load_image(self, image_path, label_path=None, fullscreen=False):
@@ -68,12 +70,16 @@ class BoundingBoxEditor:
         # Store original dimensions
         self.original_width, self.original_height = self.image.size
 
-        # Update the root to ensure the canvas size is accurate
-        self.root.update()
+        # update_idletasks processes layout/geometry only — avoids firing queued
+        # keypresses or slideshow timers mid-load which would corrupt autosave.
+        self.root.update_idletasks()
 
-        # Get canvas size
+        # Get canvas size; fall back to image dimensions if canvas isn't laid out yet
+        # (winfo_width returns 1 before the window is fully rendered).
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
+        if canvas_width <= 1 or canvas_height <= 1:
+            canvas_width, canvas_height = self.original_width, self.original_height
 
         # Calculate the scaling factor to maintain aspect ratio
         scale_factor = min(canvas_width / self.original_width, canvas_height / self.original_height)
@@ -128,6 +134,20 @@ class BoundingBoxEditor:
 
     def toggle_edit_mode(self):
         self.edit_mode = not self.edit_mode
+        if not self.edit_mode:
+            self.occlude_mode = False
+
+    def toggle_occlude_mode(self):
+        self.occlude_mode = not self.occlude_mode
+
+    def draw_occluder(self, x1, y1, x2, y2):
+        """Draw a filled white occluder rectangle on the canvas (image pixel coords)."""
+        sx1 = x1 * self.scale_factor + self.x_offset
+        sy1 = y1 * self.scale_factor + self.y_offset
+        sx2 = x2 * self.scale_factor + self.x_offset
+        sy2 = y2 * self.scale_factor + self.y_offset
+        self.canvas.create_rectangle(sx1, sy1, sx2, sy2,
+                                     fill='white', outline='#aaaaaa', width=1, tags='occluder')
 
     def start_bbox(self, event):
         if not self.edit_mode or self._resizing:
@@ -137,40 +157,50 @@ class BoundingBoxEditor:
     def draw_bbox(self, event):
         if not self.edit_mode or self.current_bbox is None:
             return
-
         self.current_bbox[2] = event.x
         self.current_bbox[3] = event.y
         self.canvas.delete("preview")
-        self.canvas.create_rectangle(self.current_bbox[0],
-                                     self.current_bbox[1],
-                                     self.current_bbox[2],
-                                     self.current_bbox[3],
-                                     outline="blue", width=2, tag="preview")
+        if self.occlude_mode:
+            self.canvas.create_rectangle(
+                self.current_bbox[0], self.current_bbox[1],
+                self.current_bbox[2], self.current_bbox[3],
+                fill='white', stipple='gray50', outline='orange', width=2, tag="preview")
+        else:
+            self.canvas.create_rectangle(
+                self.current_bbox[0], self.current_bbox[1],
+                self.current_bbox[2], self.current_bbox[3],
+                outline="blue", width=2, tag="preview")
 
     def save_bbox(self, event):
         if not self.edit_mode or self.current_bbox is None or self._resizing:
             return
-
         x1, y1, x2, y2 = self.current_bbox
-        class_num = self.current_class
         if self.original_width > 0 and self.original_height > 0:
-            # Convert canvas coords back to original image pixel coords
             orig_x1 = int((x1 - self.x_offset) / self.scale_factor)
             orig_y1 = int((y1 - self.y_offset) / self.scale_factor)
             orig_x2 = int((x2 - self.x_offset) / self.scale_factor)
             orig_y2 = int((y2 - self.y_offset) / self.scale_factor)
-            bbox = BoundingBox(orig_x1, orig_y1, orig_x2, orig_y2, class_num)
-            self.bboxes.append(bbox)
-            self.draw_bounding_box(bbox, self.x_offset, self.y_offset, self.scale_factor)
-            if self.on_bbox_added:
-                self.on_bbox_added()
+            if self.occlude_mode:
+                if self.on_occluder_added:
+                    self.on_occluder_added(orig_x1, orig_y1, orig_x2, orig_y2)
+            else:
+                bbox = BoundingBox(orig_x1, orig_y1, orig_x2, orig_y2, self.current_class)
+                self.bboxes.append(bbox)
+                self.draw_bounding_box(bbox, self.x_offset, self.y_offset, self.scale_factor)
+                if self.on_bbox_added:
+                    self.on_bbox_added()
         self.current_bbox = None
 
     def select_bbox(self, event):
+        orig_x = (event.x - self.x_offset) / self.scale_factor
+        orig_y = (event.y - self.y_offset) / self.scale_factor
         for bbox in self.bboxes:
-            if bbox.x1 <= event.x <= bbox.x2 and bbox.y1 <= event.y <= bbox.y2:
+            if bbox.x1 <= orig_x <= bbox.x2 and bbox.y1 <= orig_y <= bbox.y2:
+                if self.selected_bbox and self.selected_bbox != bbox:
+                    prev_color = self.class_colors.get(int(self.selected_bbox.class_num), '#555555')
+                    self.canvas.itemconfig(self.selected_bbox.rect_id, outline=prev_color)
                 self.selected_bbox = bbox
-                self.canvas.itemconfig(bbox.rect_id, outline="blue")  # Highlight selected bbox
+                self.canvas.itemconfig(bbox.rect_id, outline="blue")
                 break
 
     def show_resize_handles(self, bbox):

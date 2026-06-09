@@ -1,6 +1,9 @@
 import os
 import time
+import json
 
+from PIL import Image, ImageDraw
+from bounding_box import BoundingBox
 from image_loader import ImageLoader
 from bbox_editor import BoundingBoxEditor
 from image_viewer_view import ImageViewerView
@@ -35,6 +38,9 @@ class ImageViewerController:
         # Review state
         self._flagged_images = set()
         self._nav_times = []  # timestamps of recent show_image() calls for ETA
+        self._persistent_bboxes = set()  # (x1,y1,x2,y2,class_num) tuples pinned to carry across frames
+        self._occluders = {}             # {filename: [(x1,y1,x2,y2), ...]} loaded from occluders.json
+        self._persistent_occluders = set()  # (x1,y1,x2,y2) carried to each new frame
 
         # Create view first — establishes bottom bar and content_frame
         self.view = ImageViewerView(root, self)
@@ -44,8 +50,9 @@ class ImageViewerController:
         self.canvas = self.editor.canvas
         self.canvas.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
 
-        # Callback so editor can notify controller when a bbox is added
+        # Callbacks from editor
         self.editor.on_bbox_added = self._on_bbox_added
+        self.editor.on_occluder_added = self._on_occluder_added
 
         # Bind keyboard shortcuts
         self.bind_shortcuts()
@@ -56,6 +63,7 @@ class ImageViewerController:
             self.editor.class_mapping = self.loader.class_mapping
             self._apply_project_config(folder)
             self._flagged_images = self._load_flags()
+            self._occluders = self._load_occluders()
             self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
             if self.loader.num_images() < 5000:
                 cleaned = self.loader.clean_label_files()
@@ -70,7 +78,9 @@ class ImageViewerController:
     def bind_shortcuts(self):
         """Binds all keyboard shortcuts to their respective functions."""
         self.root.bind('<d>', lambda e: self.show_next_image())
+        self.root.bind('<p>', lambda e: self.show_next_image())
         self.root.bind('<a>', lambda e: self.show_prev_image())
+        self.root.bind('<o>', lambda e: self.show_prev_image())
         self.root.bind('<e>', lambda e: self.toggle_edit_mode())
         self.root.bind('<g>', lambda e: self.delete_selected_bbox())
         self.root.bind('<q>', lambda e: self.toggle_fullscreen())
@@ -81,6 +91,7 @@ class ImageViewerController:
         self.root.bind('<f>', lambda e: self.flag_current_image())
         self.root.bind('<Control-f>', lambda e: self.jump_to_next_flagged())
         self.root.bind('<Control-g>', lambda e: self.jump_to_image_by_number())
+        self.root.bind('<v>', lambda e: self.toggle_cover_mode())
 
         # Bind numeric keys for class selection when in edit mode
         for i in range(10):
@@ -100,11 +111,13 @@ class ImageViewerController:
         self.loader.save_last_image_index(self.current_index)
         self.editor.annotations_visible = True
         self.view.update_annotations_button(True)
-        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
         self.view.update_path(image_path)
         filename = self.loader.image_files[self.current_index]
         self.view.update_flag_button(filename in self._flagged_images, len(self._flagged_images))
         self._update_progress()
+        self._draw_current_occluders()
+        self._refresh_occluder_list()
 
     def show_next_image(self):
         if self.loader is None:
@@ -113,6 +126,8 @@ class ImageViewerController:
             self.save_bounding_boxes()
         self.current_index = (self.current_index + 1) % self.loader.num_images()
         self.show_image()
+        self._inject_persistent_bboxes()
+        self._inject_persistent_occluders()
 
     def show_prev_image(self):
         if self.loader is None:
@@ -121,6 +136,8 @@ class ImageViewerController:
             self.save_bounding_boxes()
         self.current_index = (self.current_index - 1) % self.loader.num_images()
         self.show_image()
+        self._inject_persistent_bboxes()
+        self._inject_persistent_occluders()
 
     def toggle_edit_mode(self):
         """Toggles between edit and view modes."""
@@ -128,6 +145,7 @@ class ImageViewerController:
         if not self.editor.edit_mode:
             self.editor.clear_resize_handles()
         self.view.update_edit_button(self.editor.edit_mode)
+        self.view.update_cover_mode_button(self.editor.occlude_mode)
         self.view.update_info_bar("Edit Mode Activated" if self.editor.edit_mode else "Edit Mode Deactivated")
 
     def set_current_class(self, class_num):
@@ -146,12 +164,17 @@ class ImageViewerController:
     def change_selected_bbox_class(self, class_num):
         """Changes the class of the currently selected bounding box."""
         bbox = self.editor.selected_bbox
+        old_spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
         bbox.class_num = class_num
+        new_spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
+        if old_spec in self._persistent_bboxes:
+            self._persistent_bboxes.discard(old_spec)
+            self._persistent_bboxes.add(new_spec)
         label = f"{class_num}: {self.loader.class_mapping.get(class_num, str(class_num))}"
         color = self.editor.class_colors.get(class_num, '#555555')
         self.canvas.itemconfigure(bbox.text_id, text=label, fill=color)
         self.canvas.itemconfigure(bbox.rect_id, outline=color)
-        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
         self.view.update_info_bar(f"Changed to {class_num}: {label}")
 
     def toggle_fullscreen(self):
@@ -219,6 +242,9 @@ class ImageViewerController:
         self.action_stack.clear()
         self._flagged_images = self._load_flags()
         self._nav_times.clear()
+        self._persistent_bboxes.clear()
+        self._occluders = self._load_occluders()
+        self._persistent_occluders.clear()
         AppConfig.set_last_folder(folder)
         self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
         if self.loader.num_images() < 5000:
@@ -377,6 +403,185 @@ class ImageViewerController:
             self.show_image()
 
     # ------------------------------------------------------------------
+    # Persistent annotations (pin-to-carry-forward)
+    # ------------------------------------------------------------------
+
+    def toggle_bbox_persistent(self, index):
+        """Pin or unpin a bbox so it is copied to every subsequent frame."""
+        if not (0 <= index < len(self.editor.bboxes)):
+            return
+        bbox = self.editor.bboxes[index]
+        spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
+        if spec in self._persistent_bboxes:
+            self._persistent_bboxes.discard(spec)
+            self.view.set_annotation_pinned(index, False)
+            self.view.update_info_bar("Annotation unpinned.")
+        else:
+            self._persistent_bboxes.add(spec)
+            self.view.set_annotation_pinned(index, True)
+            self.view.update_info_bar("Annotation pinned — will be copied to each new frame.")
+
+    def _inject_persistent_bboxes(self):
+        """Add any pinned bbox templates into the current frame if not already present."""
+        if not self._persistent_bboxes or self.loader is None:
+            return
+        existing = {
+            (b.x1, b.y1, b.x2, b.y2, int(b.class_num))
+            for b in self.editor.bboxes
+        }
+        added = False
+        for spec in self._persistent_bboxes:
+            if spec not in existing:
+                bbox = BoundingBox(spec[0], spec[1], spec[2], spec[3], spec[4])
+                self.editor.bboxes.append(bbox)
+                self.editor.draw_bounding_box(
+                    bbox, self.editor.x_offset, self.editor.y_offset, self.editor.scale_factor)
+                existing.add(spec)
+                added = True
+        if added:
+            self.view.update_annotation_list(
+                self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
+            if self.autosave:
+                self.save_bounding_boxes()
+
+    # ------------------------------------------------------------------
+    # Occluder system
+    # ------------------------------------------------------------------
+
+    def _occluders_path(self):
+        return os.path.join(self.folder, "occluders.json") if self.folder else None
+
+    def _load_occluders(self):
+        path = self._occluders_path()
+        if path and os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return {k: [tuple(r) for r in v] for k, v in data.items()}
+        return {}
+
+    def _save_occluders(self):
+        path = self._occluders_path()
+        if path:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump({k: [list(r) for r in v] for k, v in self._occluders.items()}, f, indent=2)
+
+    def _draw_current_occluders(self):
+        if self.loader is None:
+            return
+        filename = self.loader.image_files[self.current_index]
+        for rect in self._occluders.get(filename, []):
+            self.editor.draw_occluder(*rect)
+
+    def _refresh_occluder_list(self):
+        if self.loader is None:
+            return
+        filename = self.loader.image_files[self.current_index]
+        rects = self._occluders.get(filename, [])
+        self.view.update_occluder_list(rects, self._persistent_occluders)
+
+    def _on_occluder_added(self, x1, y1, x2, y2):
+        if self.loader is None:
+            return
+        x1, x2 = min(x1, x2), max(x1, x2)
+        y1, y2 = min(y1, y2), max(y1, y2)
+        if x2 - x1 < 5 or y2 - y1 < 5:
+            return
+        filename = self.loader.image_files[self.current_index]
+        rect = (x1, y1, x2, y2)
+        self._occluders.setdefault(filename, []).append(rect)
+        self.editor.draw_occluder(*rect)
+        self._save_occluders()
+        self._refresh_occluder_list()
+
+    def _inject_persistent_occluders(self):
+        if not self._persistent_occluders or self.loader is None:
+            return
+        filename = self.loader.image_files[self.current_index]
+        existing = set(self._occluders.get(filename, []))
+        added = False
+        for spec in self._persistent_occluders:
+            if spec not in existing:
+                self._occluders.setdefault(filename, []).append(spec)
+                self.editor.draw_occluder(*spec)
+                existing.add(spec)
+                added = True
+        if added:
+            self._save_occluders()
+            self._refresh_occluder_list()
+
+    def toggle_cover_mode(self):
+        if self.loader is None:
+            return
+        self.editor.toggle_occlude_mode()
+        if self.editor.occlude_mode and not self.editor.edit_mode:
+            self.editor.toggle_edit_mode()
+            self.view.update_edit_button(True)
+        self.view.update_cover_mode_button(self.editor.occlude_mode)
+        if self.editor.occlude_mode:
+            self.view.update_info_bar("Cover Mode ON — draw white boxes over static background objects.")
+        else:
+            self.view.update_info_bar("Cover Mode OFF.")
+
+    def toggle_occluder_persistent(self, index):
+        if self.loader is None:
+            return
+        filename = self.loader.image_files[self.current_index]
+        rects = self._occluders.get(filename, [])
+        if not (0 <= index < len(rects)):
+            return
+        spec = rects[index]
+        if spec in self._persistent_occluders:
+            self._persistent_occluders.discard(spec)
+            self.view.set_occluder_pinned(index, False)
+            self.view.update_info_bar("Occluder unpinned.")
+        else:
+            self._persistent_occluders.add(spec)
+            self.view.set_occluder_pinned(index, True)
+            self.view.update_info_bar("Occluder pinned — covers this area in all subsequent frames.")
+
+    def delete_occluder(self, index):
+        if self.loader is None:
+            return
+        filename = self.loader.image_files[self.current_index]
+        rects = self._occluders.get(filename, [])
+        if not (0 <= index < len(rects)):
+            return
+        spec = rects[index]
+        self._persistent_occluders.discard(spec)
+        self._occluders[filename].pop(index)
+        if not self._occluders[filename]:
+            del self._occluders[filename]
+        self._save_occluders()
+        self.canvas.delete('occluder')
+        self._draw_current_occluders()
+        self._refresh_occluder_list()
+
+    def burn_occluders_to_masked(self):
+        if self.loader is None or not self._occluders:
+            self.view.update_info_bar("No occluders to burn.")
+            return
+        count_images = len(self._occluders)
+        masked_dir = os.path.join(self.loader.folder, "images_masked")
+        if not messagebox.askyesno(
+                "Burn occluders",
+                f"Write {count_images} modified image(s) to:\n{masked_dir}\n\n"
+                "Original files are not changed."):
+            return
+        os.makedirs(masked_dir, exist_ok=True)
+        burned = 0
+        for filename, rects in self._occluders.items():
+            src = os.path.join(self.loader.images_folder, filename)
+            if not os.path.exists(src):
+                continue
+            img = Image.open(src).convert('RGB')
+            draw = ImageDraw.Draw(img)
+            for x1, y1, x2, y2 in rects:
+                draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 255))
+            img.save(os.path.join(masked_dir, filename))
+            burned += 1
+        self.view.update_info_bar(f"Burned {burned} image(s) to {masked_dir}")
+
+    # ------------------------------------------------------------------
     # Sets sidebar
     # ------------------------------------------------------------------
 
@@ -448,7 +653,7 @@ class ImageViewerController:
     def _on_bbox_added(self):
         if self.loader is None:
             return
-        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
 
     def toggle_annotations(self):
         return self.editor.toggle_annotations()
@@ -468,11 +673,12 @@ class ImageViewerController:
             return
         if 0 <= index < len(self.editor.bboxes):
             bbox = self.editor.bboxes[index]
+            self._persistent_bboxes.discard((bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num)))
             self.canvas.delete(bbox.rect_id)
             self.canvas.delete(bbox.text_id)
             self.editor.bboxes.pop(index)
             self.editor.clear_resize_handles()
-            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
             self.view.update_info_bar("Deleted successfully.")
 
     def delete_current_image(self):
@@ -483,7 +689,11 @@ class ImageViewerController:
             self.view.update_info_bar("Enable Edit Mode to delete images.")
             return
         self.loader.delete_image(self.current_index)
-        self.show_next_image()
+        # Clear bboxes before showing the next image so autosave cannot write
+        # the deleted image's annotations onto the file that now occupies this index.
+        self.editor.bboxes.clear()
+        self.current_index = min(self.current_index, self.loader.num_images() - 1)
+        self.show_image()
 
     def delete_selected_bbox(self):
         """Deletes the selected bounding box and updates the file."""
@@ -491,15 +701,17 @@ class ImageViewerController:
             self.view.update_info_bar("Enable Edit Mode to delete annotations.")
             return
         if self.editor.selected_bbox:
-            self.add_action("delete", self.editor.selected_bbox)
+            bbox = self.editor.selected_bbox
+            self._persistent_bboxes.discard((bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num)))
+            self.add_action("delete", bbox)
 
             # Remove from canvas and list
-            self.canvas.delete(self.editor.selected_bbox.rect_id)
-            self.canvas.delete(self.editor.selected_bbox.text_id)
-            self.editor.bboxes.remove(self.editor.selected_bbox)
+            self.canvas.delete(bbox.rect_id)
+            self.canvas.delete(bbox.text_id)
+            self.editor.bboxes.remove(bbox)
             self.editor.selected_bbox = None
             self.editor.clear_resize_handles()
-            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
             self.view.update_info_bar("Deleted successfully.")
         else:
             self.view.update_info_bar("No bounding box selected.")
@@ -522,8 +734,9 @@ class ImageViewerController:
         if action_type == "delete":
             self.editor.draw_bounding_box(bbox, self.editor.x_offset, self.editor.y_offset, self.editor.scale_factor)
             self.editor.bboxes.append(bbox)
-            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names())
+            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
 
         elif action_type == "add":
             self.canvas.delete(bbox.rect_id)
             self.editor.bboxes.remove(bbox)
+            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)

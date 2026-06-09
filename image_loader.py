@@ -2,9 +2,8 @@ import os
 import json
 
 _DEFAULT_CLASS_MAPPING = {
-    0: "train", 1: "person", 2: "car", 3: "motorcycle",
-    4: "bicycle", 5: "forklift", 6: "truck", 7: "excavator",
-    8: "bus", 9: "railway",
+    0: "person", 1: "car", 2: "motorcycle", 3: "bicycle",
+    4: "forklift", 5: "truck", 6: "excavator", 7: "bus",
 }
 
 
@@ -113,10 +112,6 @@ class ImageLoader:
         # Remove the file from the internal list of image files
         del self.image_files[index]
 
-    def has_images(self):
-        """Checks if there are any images available."""
-        return bool(self.image_files)
-
     def clean_label_files(self):
         """Remove duplicate and malformed lines from all label files."""
         cleaned = 0
@@ -134,7 +129,7 @@ class ImageLoader:
                 if len(parts) != 5:
                     continue
                 try:
-                    map(float, parts)
+                    [float(p) for p in parts]
                 except ValueError:
                     continue
                 if stripped not in seen:

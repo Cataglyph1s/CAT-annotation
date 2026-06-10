@@ -92,6 +92,7 @@ class ImageViewerController:
         self.root.bind('<Control-f>', lambda e: self.jump_to_next_flagged())
         self.root.bind('<Control-g>', lambda e: self.jump_to_image_by_number())
         self.root.bind('<v>', lambda e: self.toggle_cover_mode())
+        self.root.bind('<Escape>', lambda e: self.deselect_bbox())
 
         # Bind numeric keys for class selection when in edit mode
         for i in range(10):
@@ -653,10 +654,20 @@ class ImageViewerController:
     def _on_bbox_added(self):
         if self.loader is None:
             return
+        if self.editor.bboxes:
+            self.add_action("add", self.editor.bboxes[-1])
         self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
 
     def toggle_annotations(self):
         return self.editor.toggle_annotations()
+
+    def deselect_bbox(self):
+        """Clear the current bbox selection without deleting it."""
+        if self.editor.selected_bbox:
+            color = self.editor.class_colors.get(int(self.editor.selected_bbox.class_num), '#555555')
+            self.canvas.itemconfig(self.editor.selected_bbox.rect_id, outline=color)
+            self.editor.selected_bbox = None
+            self.editor.clear_resize_handles()
 
     def select_annotation_by_index(self, index):
         if 0 <= index < len(self.editor.bboxes):
@@ -674,6 +685,7 @@ class ImageViewerController:
         if 0 <= index < len(self.editor.bboxes):
             bbox = self.editor.bboxes[index]
             self._persistent_bboxes.discard((bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num)))
+            self.add_action("delete", bbox)
             self.canvas.delete(bbox.rect_id)
             self.canvas.delete(bbox.text_id)
             self.editor.bboxes.pop(index)
@@ -735,6 +747,19 @@ class ImageViewerController:
             self.editor.draw_bounding_box(bbox, self.editor.x_offset, self.editor.y_offset, self.editor.scale_factor)
             self.editor.bboxes.append(bbox)
             self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
+            self.view.update_info_bar("Undo: restored deleted annotation.")
+
+        elif action_type == "add":
+            # Match by rect_id — BoundingBox has no __eq__, so identity compare won't work on the copy
+            target = next((b for b in self.editor.bboxes if b.rect_id == bbox.rect_id), None)
+            if target:
+                self.canvas.delete(target.rect_id)
+                self.canvas.delete(target.text_id)
+                self.editor.bboxes.remove(target)
+                self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
+                self.view.update_info_bar("Undo: removed drawn annotation.")
+            else:
+                self.view.update_info_bar("Undo: annotation no longer on this frame.")
 
         elif action_type == "add":
             self.canvas.delete(bbox.rect_id)

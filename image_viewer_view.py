@@ -213,14 +213,19 @@ class ImageViewerView:
         self.btn_delete_bbox.grid(row=0, column=5, padx=5)
         self.controller.add_tooltip(self.btn_delete_bbox, "Shortcut: g")
 
+        self.btn_deselect = tk.Button(self.button_frame, text="Deselect",
+                                      command=self.controller.deselect_bbox, width=10, **btn_cfg)
+        self.btn_deselect.grid(row=0, column=6, padx=5)
+        self.controller.add_tooltip(self.btn_deselect, "Shortcut: Escape  |  Clear bbox selection")
+
         self.btn_delete = tk.Button(self.button_frame, text="Delete Image",
                                     command=self.controller.delete_current_image, width=12, **btn_cfg)
-        self.btn_delete.grid(row=0, column=6, padx=5)
+        self.btn_delete.grid(row=0, column=7, padx=5)
         self.controller.add_tooltip(self.btn_delete, "Shortcut: ctrl + b")
 
         self.btn_fullscreen = tk.Button(self.button_frame, text="Fullscreen",
                                         command=self.controller.toggle_fullscreen, width=10, **btn_cfg)
-        self.btn_fullscreen.grid(row=0, column=7, padx=5)
+        self.btn_fullscreen.grid(row=0, column=8, padx=5)
         self.controller.add_tooltip(self.btn_fullscreen, "Shortcut: q")
 
         # Undo pinned to the bottom right
@@ -231,7 +236,7 @@ class ImageViewerView:
 
         # Row 1: review / inspection controls
         review_frame = tk.Frame(self.button_frame)
-        review_frame.grid(row=1, column=0, columnspan=8, pady=(4, 0))
+        review_frame.grid(row=1, column=0, columnspan=9, pady=(4, 0))
 
         self.btn_play = tk.Button(review_frame, text="▶ Play", width=8,
                                   command=self.controller.toggle_slideshow, **btn_cfg)

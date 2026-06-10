@@ -5,7 +5,7 @@ from tkinter import filedialog, messagebox  # used in _ensure_program_root
 from image_viewer_controller import ImageViewerController
 from app_config import AppConfig
 
-VERSION = "v0.4.0"
+VERSION = "v0.4.1"
 
 
 class ImageViewer:

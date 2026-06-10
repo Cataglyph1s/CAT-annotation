@@ -92,6 +92,7 @@ class ImageViewerController:
         self.root.bind('<Control-f>', lambda e: self.jump_to_next_flagged())
         self.root.bind('<Control-g>', lambda e: self.jump_to_image_by_number())
         self.root.bind('<v>', lambda e: self.toggle_cover_mode())
+        self.root.bind('<Escape>', lambda e: self.deselect_bbox())
 
         # Bind numeric keys for class selection when in edit mode
         for i in range(10):
@@ -659,6 +660,14 @@ class ImageViewerController:
 
     def toggle_annotations(self):
         return self.editor.toggle_annotations()
+
+    def deselect_bbox(self):
+        """Clear the current bbox selection without deleting it."""
+        if self.editor.selected_bbox:
+            color = self.editor.class_colors.get(int(self.editor.selected_bbox.class_num), '#555555')
+            self.canvas.itemconfig(self.editor.selected_bbox.rect_id, outline=color)
+            self.editor.selected_bbox = None
+            self.editor.clear_resize_handles()
 
     def select_annotation_by_index(self, index):
         if 0 <= index < len(self.editor.bboxes):

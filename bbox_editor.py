@@ -202,6 +202,13 @@ class BoundingBoxEditor:
                 self.selected_bbox = bbox
                 self.canvas.itemconfig(bbox.rect_id, outline="blue")
                 break
+        else:
+            # Right-click on empty canvas — deselect
+            if self.selected_bbox:
+                prev_color = self.class_colors.get(int(self.selected_bbox.class_num), '#555555')
+                self.canvas.itemconfig(self.selected_bbox.rect_id, outline=prev_color)
+                self.selected_bbox = None
+                self.clear_resize_handles()
 
     def show_resize_handles(self, bbox):
         """Draw corner handles on the selected bounding box."""

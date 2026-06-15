@@ -90,6 +90,7 @@ class ImageViewerController:
         self.root.bind('<space>', lambda e: self.toggle_slideshow())
         self.root.bind('<f>', lambda e: self.flag_current_image())
         self.root.bind('<Control-f>', lambda e: self.jump_to_next_flagged())
+        self.root.bind('<Control-F>', lambda e: self.jump_to_prev_flagged())
         self.root.bind('<Control-g>', lambda e: self.jump_to_image_by_number())
         self.root.bind('<v>', lambda e: self.toggle_cover_mode())
         self.root.bind('<Escape>', lambda e: self.deselect_bbox())
@@ -352,6 +353,18 @@ class ImageViewerController:
         n = self.loader.num_images()
         for offset in range(1, n + 1):
             idx = (self.current_index + offset) % n
+            if self.loader.image_files[idx] in self._flagged_images:
+                self.current_index = idx
+                self.show_image()
+                return
+
+    def jump_to_prev_flagged(self):
+        if self.loader is None or not self._flagged_images:
+            self.view.update_info_bar("No flagged images.")
+            return
+        n = self.loader.num_images()
+        for offset in range(1, n + 1):
+            idx = (self.current_index - offset) % n
             if self.loader.image_files[idx] in self._flagged_images:
                 self.current_index = idx
                 self.show_image()

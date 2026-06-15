@@ -700,11 +700,30 @@ class ImageViewerController:
         if not self.editor.edit_mode:
             self.view.update_info_bar("Enable Edit Mode to delete images.")
             return
-        self.loader.delete_image(self.current_index)
+        index = self.current_index
+        image_path, label_path = self.loader.get_image_and_label(index)
+        filename = self.loader.image_files[index]
+        with open(image_path, 'rb') as f:
+            image_data = f.read()
+        label_data = None
+        if os.path.exists(label_path):
+            with open(label_path, 'r', encoding='utf-8') as f:
+                label_data = f.read()
+        if len(self.action_stack) >= self.max_actions:
+            self.action_stack.pop(0)
+        self.action_stack.append(("delete_image", {
+            "index": index,
+            "filename": filename,
+            "image_data": image_data,
+            "label_data": label_data,
+            "image_path": image_path,
+            "label_path": label_path,
+        }))
+        self.loader.delete_image(index)
         # Clear bboxes before showing the next image so autosave cannot write
         # the deleted image's annotations onto the file that now occupies this index.
         self.editor.bboxes.clear()
-        self.current_index = min(self.current_index, self.loader.num_images() - 1)
+        self.current_index = min(index, self.loader.num_images() - 1)
         self.show_image()
 
     def delete_selected_bbox(self):
@@ -761,7 +780,16 @@ class ImageViewerController:
             else:
                 self.view.update_info_bar("Undo: annotation no longer on this frame.")
 
-        elif action_type == "add":
-            self.canvas.delete(bbox.rect_id)
-            self.editor.bboxes.remove(bbox)
+        elif action_type == "delete_image":
+            data = bbox  # payload is a dict, not a BoundingBox
+            with open(data["image_path"], 'wb') as f:
+                f.write(data["image_data"])
+            if data["label_data"] is not None:
+                with open(data["label_path"], 'w', encoding='utf-8') as f:
+                    f.write(data["label_data"])
+            insert_at = min(data["index"], len(self.loader.image_files))
+            self.loader.image_files.insert(insert_at, data["filename"])
+            self.current_index = insert_at
+            self.show_image()
+            self.view.update_info_bar(f"Undo: restored {data['filename']}")
             self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)

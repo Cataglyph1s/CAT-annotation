@@ -77,7 +77,8 @@ Class names are loaded automatically from `dataset.yaml` if one is found in the 
 | Key | Action |
 |-----|--------|
 | `f` | Flag / unflag current image |
-| `Ctrl+F` | Jump to next flagged image |
+| `Ctrl+F` | Jump to next flagged image (F >>) |
+| `Ctrl+Shift+F` | Jump to previous flagged image (<< F) |
 | `v` | Toggle Cover Mode (draw white occluders) |
 
 ---

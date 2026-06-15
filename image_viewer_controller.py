@@ -165,7 +165,13 @@ class ImageViewerController:
     def change_selected_bbox_class(self, class_num):
         """Changes the class of the currently selected bounding box."""
         bbox = self.editor.selected_bbox
-        old_spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
+        old_class = int(bbox.class_num)
+        if old_class == class_num:
+            return
+        if len(self.action_stack) >= self.max_actions:
+            self.action_stack.pop(0)
+        self.action_stack.append(("change_class", {"rect_id": bbox.rect_id, "old_class": old_class}))
+        old_spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, old_class)
         bbox.class_num = class_num
         new_spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
         if old_spec in self._persistent_bboxes:
@@ -779,6 +785,26 @@ class ImageViewerController:
                 self.view.update_info_bar("Undo: removed drawn annotation.")
             else:
                 self.view.update_info_bar("Undo: annotation no longer on this frame.")
+
+        elif action_type == "change_class":
+            data = bbox
+            target = next((b for b in self.editor.bboxes if b.rect_id == data["rect_id"]), None)
+            if target:
+                old_class = data["old_class"]
+                cur_spec = (target.x1, target.y1, target.x2, target.y2, int(target.class_num))
+                target.class_num = old_class
+                new_spec = (target.x1, target.y1, target.x2, target.y2, old_class)
+                if cur_spec in self._persistent_bboxes:
+                    self._persistent_bboxes.discard(cur_spec)
+                    self._persistent_bboxes.add(new_spec)
+                label = f"{old_class}: {self.loader.class_mapping.get(old_class, str(old_class))}"
+                color = self.editor.class_colors.get(old_class, '#555555')
+                self.canvas.itemconfigure(target.text_id, text=label, fill=color)
+                self.canvas.itemconfigure(target.rect_id, outline=color)
+                self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
+                self.view.update_info_bar(f"Undo: class reverted to {old_class}: {self.loader.class_mapping.get(old_class, str(old_class))}")
+            else:
+                self.view.update_info_bar("Undo: bbox no longer on this frame.")
 
         elif action_type == "delete_image":
             data = bbox  # payload is a dict, not a BoundingBox

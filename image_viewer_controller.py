@@ -14,7 +14,7 @@ from project_wizard import ProjectWizard
 from app_config import AppConfig
 
 import tkinter as tk
-from tkinter import messagebox, filedialog
+from tkinter import messagebox, filedialog, ttk
 
 
 class ImageViewerController:
@@ -592,9 +592,22 @@ class ImageViewerController:
                 "Original files are not changed."):
             return
         os.makedirs(masked_dir, exist_ok=True)
+
+        # Progress dialog
+        prog_win = tk.Toplevel(self.root)
+        prog_win.title("Burning occluders...")
+        prog_win.resizable(False, False)
+        prog_win.grab_set()
+        tk.Label(prog_win, text="Writing images_masked/", pady=8, padx=16).pack()
+        prog_bar = ttk.Progressbar(prog_win, length=360, maximum=total, mode='determinate')
+        prog_bar.pack(padx=16, pady=(0, 4))
+        prog_label = tk.Label(prog_win, text="0 / 0", fg='gray', pady=4, padx=16)
+        prog_label.pack()
+        prog_win.update()
+
         burned = 0
         copied = 0
-        for filename in all_files:
+        for i, filename in enumerate(all_files):
             src = os.path.join(self.loader.images_folder, filename)
             dst = os.path.join(masked_dir, filename)
             if not os.path.exists(src):
@@ -609,6 +622,12 @@ class ImageViewerController:
             else:
                 shutil.copy2(src, dst)
                 copied += 1
+            if i % 50 == 0:
+                prog_bar['value'] = i + 1
+                prog_label.config(text=f"{i + 1:,} / {total:,}")
+                prog_win.update()
+
+        prog_win.destroy()
         self.view.update_info_bar(
             f"Done: {burned} burned + {copied} copied to {masked_dir}")
 

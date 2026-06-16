@@ -1,4 +1,5 @@
 import os
+import shutil
 import time
 import json
 
@@ -577,29 +578,39 @@ class ImageViewerController:
         self._refresh_occluder_list()
 
     def burn_occluders_to_masked(self):
-        if self.loader is None or not self._occluders:
-            self.view.update_info_bar("No occluders to burn.")
+        if self.loader is None:
             return
-        count_images = len(self._occluders)
+        all_files = self.loader.image_files
+        total = len(all_files)
+        occluded_count = len(self._occluders)
         masked_dir = os.path.join(self.loader.folder, "images_masked")
         if not messagebox.askyesno(
                 "Burn occluders",
-                f"Write {count_images} modified image(s) to:\n{masked_dir}\n\n"
+                f"Copy entire set ({total} images) to:\n{masked_dir}\n\n"
+                f"{occluded_count} image(s) will have occluders burned in.\n"
+                f"The rest will be copied as-is.\n\n"
                 "Original files are not changed."):
             return
         os.makedirs(masked_dir, exist_ok=True)
         burned = 0
-        for filename, rects in self._occluders.items():
+        copied = 0
+        for filename in all_files:
             src = os.path.join(self.loader.images_folder, filename)
+            dst = os.path.join(masked_dir, filename)
             if not os.path.exists(src):
                 continue
-            img = Image.open(src).convert('RGB')
-            draw = ImageDraw.Draw(img)
-            for x1, y1, x2, y2 in rects:
-                draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 255))
-            img.save(os.path.join(masked_dir, filename))
-            burned += 1
-        self.view.update_info_bar(f"Burned {burned} image(s) to {masked_dir}")
+            if filename in self._occluders:
+                img = Image.open(src).convert('RGB')
+                draw = ImageDraw.Draw(img)
+                for x1, y1, x2, y2 in self._occluders[filename]:
+                    draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 255))
+                img.save(dst)
+                burned += 1
+            else:
+                shutil.copy2(src, dst)
+                copied += 1
+        self.view.update_info_bar(
+            f"Done: {burned} burned + {copied} copied to {masked_dir}")
 
     # ------------------------------------------------------------------
     # Sets sidebar

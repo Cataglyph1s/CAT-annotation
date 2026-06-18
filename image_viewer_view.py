@@ -117,6 +117,14 @@ class ImageViewerView:
             bg='#fff3cd', relief=tk.RAISED, font=("Helvetica", 8))
         self.btn_burn_occluders.pack(fill=tk.X, padx=4, pady=(4, 2))
 
+        self.btn_tiny_to_occluders = tk.Button(
+            occluder_frame, text="Convert tiny boxes → occluders + burn",
+            command=self.controller.convert_tiny_boxes_and_burn,
+            bg='#fde8d8', relief=tk.RAISED, font=("Helvetica", 8))
+        self.btn_tiny_to_occluders.pack(fill=tk.X, padx=4, pady=(0, 2))
+        self.controller.add_tooltip(self.btn_tiny_to_occluders,
+            "Removes all boxes with area < 0.0024 from labels, adds them as occluders, then burns images_masked/")
+
         occ_canvas = tk.Canvas(occluder_frame, bd=0, highlightthickness=0)
         occ_scroll = tk.Scrollbar(occluder_frame, orient='vertical', command=occ_canvas.yview)
         occ_canvas.configure(yscrollcommand=occ_scroll.set)

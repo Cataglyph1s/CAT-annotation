@@ -577,6 +577,145 @@ class ImageViewerController:
         self._draw_current_occluders()
         self._refresh_occluder_list()
 
+    def convert_tiny_boxes_and_burn(self):
+        if self.loader is None:
+            return
+        TINY_AREA = 0.0024
+        all_files = self.loader.image_files
+        total = len(all_files)
+
+        # First pass: count affected boxes across all label files
+        tiny_count = 0
+        affected_images = 0
+        for filename in all_files:
+            lbl = os.path.join(self.loader.labels_folder,
+                               os.path.splitext(filename)[0] + '.txt')
+            if not os.path.exists(lbl):
+                continue
+            with open(lbl, 'r') as f:
+                lines = [l.strip() for l in f if l.strip()]
+            tiny = [l for l in lines if len(l.split()) == 5
+                    and float(l.split()[3]) * float(l.split()[4]) < TINY_AREA]
+            if tiny:
+                tiny_count += len(tiny)
+                affected_images += 1
+
+        if tiny_count == 0:
+            messagebox.showinfo("Convert tiny boxes",
+                                "No boxes below the threshold found.")
+            return
+
+        masked_dir = os.path.join(self.loader.folder, "images_masked")
+        if not messagebox.askyesno(
+                "Convert tiny boxes → occluders + burn",
+                f"Found {tiny_count} box(es) with area < {TINY_AREA} across "
+                f"{affected_images} image(s).\n\n"
+                f"They will be:\n"
+                f"  • Removed from label files\n"
+                f"  • Added to occluders.json\n"
+                f"  • Burned white in {masked_dir}\n\n"
+                f"Label files will be modified in place. Continue?"):
+            return
+
+        # Progress dialog — two phases
+        prog_win = tk.Toplevel(self.root)
+        prog_win.title("Converting tiny boxes...")
+        prog_win.resizable(False, False)
+        prog_win.grab_set()
+        prog_phase = tk.Label(prog_win, text="Phase 1/2: Converting labels",
+                              pady=8, padx=16)
+        prog_phase.pack()
+        prog_bar = ttk.Progressbar(prog_win, length=360, maximum=total,
+                                   mode='determinate')
+        prog_bar.pack(padx=16, pady=(0, 4))
+        prog_label = tk.Label(prog_win, text="0 / 0", fg='gray', pady=4, padx=16)
+        prog_label.pack()
+        prog_win.update()
+
+        # Second pass: modify label files, populate occluders
+        for i, filename in enumerate(all_files):
+            lbl = os.path.join(self.loader.labels_folder,
+                               os.path.splitext(filename)[0] + '.txt')
+            if not os.path.exists(lbl):
+                if i % 50 == 0:
+                    prog_bar['value'] = i + 1
+                    prog_label.config(text=f"{i + 1:,} / {total:,}")
+                    prog_win.update()
+                continue
+
+            with open(lbl, 'r') as f:
+                lines = [l.strip() for l in f if l.strip()]
+
+            keep = []
+            tiny = []
+            for l in lines:
+                parts = l.split()
+                if len(parts) == 5 and float(parts[3]) * float(parts[4]) < TINY_AREA:
+                    tiny.append(parts)
+                else:
+                    keep.append(l)
+
+            if tiny:
+                # Get image dimensions to convert normalised → pixel coords
+                src = os.path.join(self.loader.images_folder, filename)
+                with Image.open(src) as img:
+                    iw, ih = img.size
+
+                existing = self._occluders.get(filename, [])
+                for parts in tiny:
+                    xc, yc, w, h = float(parts[1]), float(parts[2]), \
+                                   float(parts[3]), float(parts[4])
+                    x1 = int((xc - w / 2) * iw)
+                    y1 = int((yc - h / 2) * ih)
+                    x2 = int((xc + w / 2) * iw)
+                    y2 = int((yc + h / 2) * ih)
+                    existing.append([x1, y1, x2, y2])
+                self._occluders[filename] = existing
+
+                with open(lbl, 'w') as f:
+                    f.write('\n'.join(keep) + ('\n' if keep else ''))
+
+            if i % 50 == 0:
+                prog_bar['value'] = i + 1
+                prog_label.config(text=f"{i + 1:,} / {total:,}")
+                prog_win.update()
+
+        self._save_occluders()
+
+        # Phase 2: burn
+        prog_phase.config(text="Phase 2/2: Burning images_masked/")
+        prog_bar['value'] = 0
+        prog_label.config(text="0 / 0")
+        prog_win.update()
+
+        os.makedirs(masked_dir, exist_ok=True)
+        for i, filename in enumerate(all_files):
+            src = os.path.join(self.loader.images_folder, filename)
+            dst = os.path.join(masked_dir, filename)
+            if not os.path.exists(src):
+                continue
+            if filename in self._occluders:
+                img = Image.open(src).convert('RGB')
+                draw = ImageDraw.Draw(img)
+                for x1, y1, x2, y2 in self._occluders[filename]:
+                    draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 255))
+                img.save(dst)
+            else:
+                shutil.copy2(src, dst)
+            if i % 50 == 0:
+                prog_bar['value'] = i + 1
+                prog_label.config(text=f"{i + 1:,} / {total:,}")
+                prog_win.update()
+
+        prog_win.destroy()
+        # Reload current image to reflect label changes
+        self.show_image()
+        self._draw_current_occluders()
+        self._refresh_occluder_list()
+        self.view.update_info_bar(
+            f"Done: {tiny_count} tiny box(es) converted to occluders, "
+            f"full set burned to {masked_dir}")
+
     def burn_occluders_to_masked(self):
         if self.loader is None:
             return

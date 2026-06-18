@@ -176,10 +176,10 @@ class BoundingBoxEditor:
             return
         x1, y1, x2, y2 = self.current_bbox
         if self.original_width > 0 and self.original_height > 0:
-            orig_x1 = int((x1 - self.x_offset) / self.scale_factor)
-            orig_y1 = int((y1 - self.y_offset) / self.scale_factor)
-            orig_x2 = int((x2 - self.x_offset) / self.scale_factor)
-            orig_y2 = int((y2 - self.y_offset) / self.scale_factor)
+            orig_x1 = max(0, min(self.original_width,  int((x1 - self.x_offset) / self.scale_factor)))
+            orig_y1 = max(0, min(self.original_height, int((y1 - self.y_offset) / self.scale_factor)))
+            orig_x2 = max(0, min(self.original_width,  int((x2 - self.x_offset) / self.scale_factor)))
+            orig_y2 = max(0, min(self.original_height, int((y2 - self.y_offset) / self.scale_factor)))
             if self.occlude_mode:
                 if self.on_occluder_added:
                     self.on_occluder_added(orig_x1, orig_y1, orig_x2, orig_y2)
@@ -251,8 +251,8 @@ class BoundingBoxEditor:
         if not self._drag_corner or not self._resize_bbox:
             return
         bbox = self._resize_bbox
-        orig_x = int((event.x - self.x_offset) / self.scale_factor)
-        orig_y = int((event.y - self.y_offset) / self.scale_factor)
+        orig_x = max(0, min(self.original_width,  int((event.x - self.x_offset) / self.scale_factor)))
+        orig_y = max(0, min(self.original_height, int((event.y - self.y_offset) / self.scale_factor)))
         if 'l' in self._drag_corner:
             bbox.x1 = orig_x
         if 'r' in self._drag_corner:

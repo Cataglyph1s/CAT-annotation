@@ -257,10 +257,15 @@ class ImageViewerView:
                                          font=("Helvetica", 8), bg='SystemButtonFace')
         self.flag_count_label.pack(side=tk.LEFT, padx=(0, 12))
 
-        self.btn_next_flagged = tk.Button(review_frame, text="Next Flagged", width=12,
+        self.btn_prev_flagged = tk.Button(review_frame, text="<< F", width=5,
+                                          command=self.controller.jump_to_prev_flagged, **btn_cfg)
+        self.btn_prev_flagged.pack(side=tk.LEFT, padx=(4, 1))
+        self.controller.add_tooltip(self.btn_prev_flagged, "Previous flagged image  |  Shortcut: ctrl + shift + f")
+
+        self.btn_next_flagged = tk.Button(review_frame, text="F >>", width=5,
                                           command=self.controller.jump_to_next_flagged, **btn_cfg)
-        self.btn_next_flagged.pack(side=tk.LEFT, padx=4)
-        self.controller.add_tooltip(self.btn_next_flagged, "Shortcut: ctrl + f")
+        self.btn_next_flagged.pack(side=tk.LEFT, padx=(1, 4))
+        self.controller.add_tooltip(self.btn_next_flagged, "Next flagged image  |  Shortcut: ctrl + f")
 
         self.btn_jump = tk.Button(review_frame, text="Jump to N", width=10,
                                   command=self.controller.jump_to_image_by_number, **btn_cfg)

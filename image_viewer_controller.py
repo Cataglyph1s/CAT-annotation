@@ -1,4 +1,5 @@
 import os
+import shutil
 import time
 import json
 
@@ -13,7 +14,7 @@ from project_wizard import ProjectWizard
 from app_config import AppConfig
 
 import tkinter as tk
-from tkinter import messagebox, filedialog
+from tkinter import messagebox, filedialog, ttk
 
 
 class ImageViewerController:
@@ -90,6 +91,7 @@ class ImageViewerController:
         self.root.bind('<space>', lambda e: self.toggle_slideshow())
         self.root.bind('<f>', lambda e: self.flag_current_image())
         self.root.bind('<Control-f>', lambda e: self.jump_to_next_flagged())
+        self.root.bind('<Control-F>', lambda e: self.jump_to_prev_flagged())
         self.root.bind('<Control-g>', lambda e: self.jump_to_image_by_number())
         self.root.bind('<v>', lambda e: self.toggle_cover_mode())
         self.root.bind('<Escape>', lambda e: self.deselect_bbox())
@@ -165,7 +167,13 @@ class ImageViewerController:
     def change_selected_bbox_class(self, class_num):
         """Changes the class of the currently selected bounding box."""
         bbox = self.editor.selected_bbox
-        old_spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
+        old_class = int(bbox.class_num)
+        if old_class == class_num:
+            return
+        if len(self.action_stack) >= self.max_actions:
+            self.action_stack.pop(0)
+        self.action_stack.append(("change_class", {"rect_id": bbox.rect_id, "old_class": old_class}))
+        old_spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, old_class)
         bbox.class_num = class_num
         new_spec = (bbox.x1, bbox.y1, bbox.x2, bbox.y2, int(bbox.class_num))
         if old_spec in self._persistent_bboxes:
@@ -346,6 +354,18 @@ class ImageViewerController:
         n = self.loader.num_images()
         for offset in range(1, n + 1):
             idx = (self.current_index + offset) % n
+            if self.loader.image_files[idx] in self._flagged_images:
+                self.current_index = idx
+                self.show_image()
+                return
+
+    def jump_to_prev_flagged(self):
+        if self.loader is None or not self._flagged_images:
+            self.view.update_info_bar("No flagged images.")
+            return
+        n = self.loader.num_images()
+        for offset in range(1, n + 1):
+            idx = (self.current_index - offset) % n
             if self.loader.image_files[idx] in self._flagged_images:
                 self.current_index = idx
                 self.show_image()
@@ -558,29 +578,58 @@ class ImageViewerController:
         self._refresh_occluder_list()
 
     def burn_occluders_to_masked(self):
-        if self.loader is None or not self._occluders:
-            self.view.update_info_bar("No occluders to burn.")
+        if self.loader is None:
             return
-        count_images = len(self._occluders)
+        all_files = self.loader.image_files
+        total = len(all_files)
+        occluded_count = len(self._occluders)
         masked_dir = os.path.join(self.loader.folder, "images_masked")
         if not messagebox.askyesno(
                 "Burn occluders",
-                f"Write {count_images} modified image(s) to:\n{masked_dir}\n\n"
+                f"Copy entire set ({total} images) to:\n{masked_dir}\n\n"
+                f"{occluded_count} image(s) will have occluders burned in.\n"
+                f"The rest will be copied as-is.\n\n"
                 "Original files are not changed."):
             return
         os.makedirs(masked_dir, exist_ok=True)
+
+        # Progress dialog
+        prog_win = tk.Toplevel(self.root)
+        prog_win.title("Burning occluders...")
+        prog_win.resizable(False, False)
+        prog_win.grab_set()
+        tk.Label(prog_win, text="Writing images_masked/", pady=8, padx=16).pack()
+        prog_bar = ttk.Progressbar(prog_win, length=360, maximum=total, mode='determinate')
+        prog_bar.pack(padx=16, pady=(0, 4))
+        prog_label = tk.Label(prog_win, text="0 / 0", fg='gray', pady=4, padx=16)
+        prog_label.pack()
+        prog_win.update()
+
         burned = 0
-        for filename, rects in self._occluders.items():
+        copied = 0
+        for i, filename in enumerate(all_files):
             src = os.path.join(self.loader.images_folder, filename)
+            dst = os.path.join(masked_dir, filename)
             if not os.path.exists(src):
                 continue
-            img = Image.open(src).convert('RGB')
-            draw = ImageDraw.Draw(img)
-            for x1, y1, x2, y2 in rects:
-                draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 255))
-            img.save(os.path.join(masked_dir, filename))
-            burned += 1
-        self.view.update_info_bar(f"Burned {burned} image(s) to {masked_dir}")
+            if filename in self._occluders:
+                img = Image.open(src).convert('RGB')
+                draw = ImageDraw.Draw(img)
+                for x1, y1, x2, y2 in self._occluders[filename]:
+                    draw.rectangle([x1, y1, x2, y2], fill=(255, 255, 255))
+                img.save(dst)
+                burned += 1
+            else:
+                shutil.copy2(src, dst)
+                copied += 1
+            if i % 50 == 0:
+                prog_bar['value'] = i + 1
+                prog_label.config(text=f"{i + 1:,} / {total:,}")
+                prog_win.update()
+
+        prog_win.destroy()
+        self.view.update_info_bar(
+            f"Done: {burned} burned + {copied} copied to {masked_dir}")
 
     # ------------------------------------------------------------------
     # Sets sidebar
@@ -700,11 +749,30 @@ class ImageViewerController:
         if not self.editor.edit_mode:
             self.view.update_info_bar("Enable Edit Mode to delete images.")
             return
-        self.loader.delete_image(self.current_index)
+        index = self.current_index
+        image_path, label_path = self.loader.get_image_and_label(index)
+        filename = self.loader.image_files[index]
+        with open(image_path, 'rb') as f:
+            image_data = f.read()
+        label_data = None
+        if os.path.exists(label_path):
+            with open(label_path, 'r', encoding='utf-8') as f:
+                label_data = f.read()
+        if len(self.action_stack) >= self.max_actions:
+            self.action_stack.pop(0)
+        self.action_stack.append(("delete_image", {
+            "index": index,
+            "filename": filename,
+            "image_data": image_data,
+            "label_data": label_data,
+            "image_path": image_path,
+            "label_path": label_path,
+        }))
+        self.loader.delete_image(index)
         # Clear bboxes before showing the next image so autosave cannot write
         # the deleted image's annotations onto the file that now occupies this index.
         self.editor.bboxes.clear()
-        self.current_index = min(self.current_index, self.loader.num_images() - 1)
+        self.current_index = min(index, self.loader.num_images() - 1)
         self.show_image()
 
     def delete_selected_bbox(self):
@@ -761,7 +829,36 @@ class ImageViewerController:
             else:
                 self.view.update_info_bar("Undo: annotation no longer on this frame.")
 
-        elif action_type == "add":
-            self.canvas.delete(bbox.rect_id)
-            self.editor.bboxes.remove(bbox)
+        elif action_type == "change_class":
+            data = bbox
+            target = next((b for b in self.editor.bboxes if b.rect_id == data["rect_id"]), None)
+            if target:
+                old_class = data["old_class"]
+                cur_spec = (target.x1, target.y1, target.x2, target.y2, int(target.class_num))
+                target.class_num = old_class
+                new_spec = (target.x1, target.y1, target.x2, target.y2, old_class)
+                if cur_spec in self._persistent_bboxes:
+                    self._persistent_bboxes.discard(cur_spec)
+                    self._persistent_bboxes.add(new_spec)
+                label = f"{old_class}: {self.loader.class_mapping.get(old_class, str(old_class))}"
+                color = self.editor.class_colors.get(old_class, '#555555')
+                self.canvas.itemconfigure(target.text_id, text=label, fill=color)
+                self.canvas.itemconfigure(target.rect_id, outline=color)
+                self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
+                self.view.update_info_bar(f"Undo: class reverted to {old_class}: {self.loader.class_mapping.get(old_class, str(old_class))}")
+            else:
+                self.view.update_info_bar("Undo: bbox no longer on this frame.")
+
+        elif action_type == "delete_image":
+            data = bbox  # payload is a dict, not a BoundingBox
+            with open(data["image_path"], 'wb') as f:
+                f.write(data["image_data"])
+            if data["label_data"] is not None:
+                with open(data["label_path"], 'w', encoding='utf-8') as f:
+                    f.write(data["label_data"])
+            insert_at = min(data["index"], len(self.loader.image_files))
+            self.loader.image_files.insert(insert_at, data["filename"])
+            self.current_index = insert_at
+            self.show_image()
+            self.view.update_info_bar(f"Undo: restored {data['filename']}")
             self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)

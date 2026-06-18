@@ -119,6 +119,28 @@ If a background object is stationary across many frames the model may memorise i
 4. When done, click **Burn to images_masked/** to write masked copies of all affected images
 5. Point your training pipeline at `images_masked/` instead of `images/` — originals are untouched
 
+### Converting tiny annotations to occluders
+
+Bounding boxes with a normalised area (width × height) below **0.0024** are too small for YOLOv8n/s to detect reliably at 640 px input and add noise to training. The Occluders panel provides a one-click fix:
+
+1. Click **"Convert tiny boxes → occluders + burn"** in the Occluders panel
+2. A confirmation dialog shows how many boxes will be affected across how many images
+3. On confirm, the tool:
+   - Removes all sub-threshold boxes from the label files (all classes)
+   - Adds their coordinates to `occluders.json` as white occluder rectangles
+   - Burns the full set to `images_masked/` with those areas whited out
+
+> **Note:** label files are modified in place. Back up your `labels/` folder first if you want to be safe.
+
+Size reference at 640 px input:
+
+| Normalised area (w × h) | Equivalent px | Verdict |
+|---|---|---|
+| < 0.00024 | < ~10 × 10 px | Pure noise |
+| < 0.0024 | < ~32 × 32 px | Below reliable detection threshold (this tool's cutoff) |
+| 0.0024 – 0.023 | 32 – 96 px | Small but trainable |
+| > 0.023 | > 96 px | Trains reliably |
+
 ### Multiple sets
 
 If a project has multiple sets (e.g. `train/`, `val/`) they appear in the **Sets** panel on the left. Double-click a set to switch to it. Click `◀` / `▶` to collapse or expand the panel.

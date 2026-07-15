@@ -24,6 +24,8 @@ class ImageViewerView:
         self.app_menu.add_separator()
         self.app_menu.add_command(label="Open Folder...", command=self.controller.open_folder)
         self.app_menu.add_command(label="Import Video...", command=self.controller.open_video_importer)
+        self.app_menu.add_separator()
+        self.app_menu.add_command(label="Add Set to Project...", command=self.controller.open_add_set_dialog)
 
         # Info bar at the bottom
         info_frame = tk.Frame(root, relief=tk.SUNKEN, bd=1, bg='lightgray')

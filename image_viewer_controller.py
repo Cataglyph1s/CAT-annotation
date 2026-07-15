@@ -580,7 +580,7 @@ class ImageViewerController:
     def convert_tiny_boxes_and_burn(self):
         if self.loader is None:
             return
-        TINY_AREA = 0.0024
+        TINY_AREA = 0.0025
         all_files = self.loader.image_files
         total = len(all_files)
 
@@ -808,6 +808,38 @@ class ImageViewerController:
 
     def toggle_sets_panel(self):
         self.view.toggle_sets_panel()
+
+    def open_add_set_dialog(self):
+        """Opens the Add Set dialog for the currently loaded project."""
+        if self.loader is None:
+            messagebox.showinfo("No project",
+                                "Please open a project first.", parent=self.root)
+            return
+        project_root = self._get_project_root(self.folder)
+        if not project_root:
+            messagebox.showwarning(
+                "Not a project",
+                "This folder is not part of a CAT:annotation project.\n"
+                "Use 'New Project' to create one first.", parent=self.root)
+            return
+        config = ProjectManager.load_project_config(project_root)
+        if not config:
+            messagebox.showerror("Error", "Could not read project.json.", parent=self.root)
+            return
+        project_classes = {c['id']: c['name'] for c in config.get('classes', [])}
+        from add_set_dialog import AddSetDialog
+        AddSetDialog(self.root, project_root, project_classes,
+                     on_done=self._on_set_added)
+
+    def _on_set_added(self, set_path, n_img=0, n_lbl=0):
+        """Called by AddSetDialog after a set is created or imported."""
+        self._populate_sets_sidebar()
+        name = os.path.basename(set_path)
+        if n_img > 0 or n_lbl > 0:
+            self.view.update_info_bar(
+                f"Set '{name}' added: {n_img} image(s), {n_lbl} label file(s) copied.")
+        else:
+            self.view.update_info_bar(f"Empty set '{name}' created.")
 
     def open_project_wizard(self):
         """Opens the New Project wizard."""

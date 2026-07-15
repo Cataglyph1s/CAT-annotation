@@ -73,6 +73,79 @@ class ProjectManager:
         return sets
 
     @staticmethod
+    def import_set_from_yolo(project_path, set_name, source_folder, class_map=None):
+        """
+        Create a new set in project_path by copying from a YOLO-format source folder.
+        Handles standard (images/ + labels/), flat, and mixed layouts.
+        class_map: {src_id: project_id} or None (copy labels verbatim).
+        Returns (set_path, images_copied, labels_done).
+        """
+        set_path = ProjectManager.create_image_set(project_path, set_name)
+        dst_images = os.path.join(set_path, 'images')
+        dst_labels = os.path.join(set_path, 'labels')
+
+        # Resolve source images folder
+        src_images = source_folder
+        if os.path.isdir(os.path.join(source_folder, 'images')):
+            src_images = os.path.join(source_folder, 'images')
+
+        # Resolve source labels folder
+        src_labels = None
+        candidate = os.path.join(source_folder, 'labels')
+        if os.path.isdir(candidate):
+            src_labels = candidate
+        elif src_images == source_folder:
+            # flat layout: labels sit alongside images in the same folder
+            src_labels = source_folder
+
+        # Copy images
+        img_exts = {'.jpg', '.jpeg', '.png'}
+        images_copied = 0
+        for fname in os.listdir(src_images):
+            if os.path.splitext(fname)[1].lower() in img_exts:
+                shutil.copy2(os.path.join(src_images, fname),
+                             os.path.join(dst_images, fname))
+                images_copied += 1
+
+        # Copy / remap labels
+        labels_done = 0
+        if src_labels and os.path.isdir(src_labels):
+            for fname in os.listdir(src_labels):
+                if not fname.endswith('.txt'):
+                    continue
+                src_path = os.path.join(src_labels, fname)
+                dst_path = os.path.join(dst_labels, fname)
+                if class_map:
+                    ProjectManager._remap_label_file(src_path, dst_path, class_map)
+                else:
+                    shutil.copy2(src_path, dst_path)
+                labels_done += 1
+
+        return set_path, images_copied, labels_done
+
+    @staticmethod
+    def _remap_label_file(src_path, dst_path, class_map):
+        """Copy a YOLO .txt label file, remapping class IDs. Lines with unmapped IDs are dropped."""
+        lines_out = []
+        with open(src_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) < 5:
+                    continue
+                src_id = int(parts[0])
+                if src_id not in class_map:
+                    continue
+                parts[0] = str(class_map[src_id])
+                lines_out.append(' '.join(parts))
+        with open(dst_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines_out))
+            if lines_out:
+                f.write('\n')
+
+    @staticmethod
     def get_set_stats(set_path):
         """Returns (total_images, annotated_images) for a set folder."""
         img_exts = {'.jpg', '.jpeg', '.png'}

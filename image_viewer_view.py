@@ -108,6 +108,8 @@ class ImageViewerView:
         self._ann_canvas = ann_canvas
         self._annotation_rows = []
         self._selected_annotation_idx = None
+        self._seg_on_delete = None
+        self._seg_on_select = None
 
         # Occluders panel
         occluder_frame = tk.LabelFrame(paned, text="Occluders", font=("Helvetica", 9, "bold"))
@@ -218,15 +220,15 @@ class ImageViewerView:
         self.btn_save.grid(row=0, column=4, padx=(20, 5))
         self.controller.add_tooltip(self.btn_save, "Shortcut: ctrl + s")
 
-        self.btn_delete_bbox = tk.Button(self.button_frame, text="Delete BBox",
-                                         command=self.controller.delete_selected_bbox, width=12, **btn_cfg)
+        self.btn_delete_bbox = tk.Button(self.button_frame, text="Delete Ann",
+                                         command=self.controller.delete_selected_annotation, width=12, **btn_cfg)
         self.btn_delete_bbox.grid(row=0, column=5, padx=5)
         self.controller.add_tooltip(self.btn_delete_bbox, "Shortcut: g")
 
         self.btn_deselect = tk.Button(self.button_frame, text="Deselect",
-                                      command=self.controller.deselect_bbox, width=10, **btn_cfg)
+                                      command=self.controller.deselect_annotation, width=10, **btn_cfg)
         self.btn_deselect.grid(row=0, column=6, padx=5)
-        self.controller.add_tooltip(self.btn_deselect, "Shortcut: Escape  |  Clear bbox selection")
+        self.controller.add_tooltip(self.btn_deselect, "Shortcut: Escape  |  Clear annotation selection")
 
         self.btn_delete = tk.Button(self.button_frame, text="Delete Image",
                                     command=self.controller.delete_current_image, width=12, **btn_cfg)
@@ -318,7 +320,8 @@ class ImageViewerView:
                 bg = 'white'
             row_info['frame'].config(bg=bg)
             row_info['label'].config(bg=bg)
-            row_info['pin_btn'].config(bg=bg)
+            if row_info.get('pin_btn'):
+                row_info['pin_btn'].config(bg=bg)
 
     def _on_annotation_delete(self, event):
         if self._selected_annotation_idx is not None:
@@ -384,11 +387,54 @@ class ImageViewerView:
             for w in (row, lbl):
                 w.bind('<Button-1>', lambda e, idx=i: self._on_annotation_select_idx(idx))
 
+    def update_seg_annotation_list(self, segs, class_names, on_delete=None, on_select=None):
+        """Rebuild the annotation panel for segmentation mode."""
+        self._seg_on_delete = on_delete
+        self._seg_on_select = on_select
+        for widget in self._ann_list_frame.winfo_children():
+            widget.destroy()
+        self._annotation_rows = []
+        self._selected_annotation_idx = None
+
+        for i, seg in enumerate(segs):
+            class_name = (class_names[seg.class_num]
+                          if seg.class_num < len(class_names) else str(seg.class_num))
+            n_pts = len(seg.points)
+            row = tk.Frame(self._ann_list_frame, bg='white', cursor='hand2')
+            row.pack(fill=tk.X)
+            lbl = tk.Label(row, text=f'{i + 1}: {class_name} ({n_pts}pts)', anchor='w',
+                           font=('Helvetica', 9), bg='white')
+            lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=2, padx=(6, 0))
+            del_btn = tk.Button(row, text='x', fg='red', font=('Helvetica', 9), width=2,
+                                relief=tk.FLAT, bd=0, bg='white',
+                                command=lambda idx=i: self._on_seg_delete(idx))
+            del_btn.pack(side=tk.RIGHT, padx=(2, 4), pady=2)
+            row_info = {'frame': row, 'label': lbl, 'del_btn': del_btn, 'pin_btn': None, 'pinned': False}
+            self._annotation_rows.append(row_info)
+            for w in (row, lbl):
+                w.bind('<Button-1>', lambda e, idx=i: self._on_seg_select_row(idx))
+
+    def _on_seg_select_row(self, idx):
+        self._selected_annotation_idx = idx
+        self._ann_canvas.focus_set()
+        for i, row_info in enumerate(self._annotation_rows):
+            bg = '#cce8ff' if i == idx else 'white'
+            row_info['frame'].config(bg=bg)
+            row_info['label'].config(bg=bg)
+        if hasattr(self, '_seg_on_select') and self._seg_on_select:
+            self._seg_on_select(idx)
+
+    def _on_seg_delete(self, idx):
+        if hasattr(self, '_seg_on_delete') and self._seg_on_delete:
+            self._seg_on_delete(idx)
+
     def set_annotation_pinned(self, index, pinned):
         """Update the pin button appearance for a single annotation row."""
         if not (0 <= index < len(self._annotation_rows)):
             return
         row = self._annotation_rows[index]
+        if not row.get('pin_btn'):
+            return  # seg mode rows have no pin button
         row['pinned'] = pinned
         is_selected = (index == self._selected_annotation_idx)
         bg = '#cce8ff' if is_selected else ('#eef4ff' if pinned else 'white')

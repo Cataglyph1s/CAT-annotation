@@ -22,6 +22,7 @@ class ProjectWizard:
         self._classes = []       # list of {'name': str, 'color': str}
         self._project_path = None
         self._sets = []          # list of set folder paths
+        self._mode = tk.StringVar(value='bbox')
 
         self.window = tk.Toplevel(root)
         self.window.title("New Project")
@@ -63,6 +64,15 @@ class ProjectWizard:
         self.base_folder = tk.StringVar()
         tk.Entry(row, textvariable=self.base_folder, width=30).pack(side=tk.LEFT, padx=(0, 6))
         tk.Button(row, text="Browse", width=8, command=self._browse_base_folder).pack(side=tk.LEFT)
+
+        # Project type
+        row = tk.Frame(self.frame1)
+        row.pack(fill=tk.X, **pad)
+        tk.Label(row, text="Type:", width=14, anchor='w').pack(side=tk.LEFT)
+        tk.Radiobutton(row, text="BBox (detection)", variable=self._mode,
+                       value='bbox').pack(side=tk.LEFT, padx=(0, 16))
+        tk.Radiobutton(row, text="Seg (segmentation)", variable=self._mode,
+                       value='seg').pack(side=tk.LEFT)
 
         # Classes header
         tk.Frame(self.frame1, height=1, bg='lightgray').pack(fill=tk.X, padx=14, pady=(8, 0))
@@ -167,7 +177,8 @@ class ProjectWizard:
             self._project_path = ProjectManager.create_project(
                 base, name,
                 [{'id': i, 'name': c['name'], 'color': c['color']}
-                 for i, c in enumerate(self._classes)]
+                 for i, c in enumerate(self._classes)],
+                mode=self._mode.get()
             )
         except Exception as e:
             messagebox.showerror("Error", f"Could not create project:\n{e}", parent=self.window)

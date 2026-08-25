@@ -6,12 +6,13 @@ import shutil
 class ProjectManager:
 
     @staticmethod
-    def create_project(base_folder, project_name, classes):
+    def create_project(base_folder, project_name, classes, mode='bbox'):
         """Creates the project folder and writes project.json. Returns the project path."""
         project_path = os.path.join(base_folder, project_name)
         os.makedirs(project_path, exist_ok=True)
         config = {
             "name": project_name,
+            "mode": mode,
             "classes": classes  # list of {id, name, color}
         }
         with open(os.path.join(project_path, "project.json"), 'w') as f:

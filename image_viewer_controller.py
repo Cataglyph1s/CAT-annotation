@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw
 from bounding_box import BoundingBox
 from image_loader import ImageLoader
 from bbox_editor import BoundingBoxEditor
+from seg_editor import SegEditor
 from image_viewer_view import ImageViewerView
 from video_importer import VideoImporter
 from project_manager import ProjectManager
@@ -35,6 +36,10 @@ class ImageViewerController:
         self._slideshow_speeds = [0.5, 1.0, 2.0, 5.0]
         self._slideshow_speed_idx = 1  # default 1.0s
         self._slideshow_after_id = None
+
+        # Project mode: 'bbox' or 'seg'
+        self._project_mode = 'bbox'
+        self._editor_type = 'bbox'
 
         # Review state
         self._flagged_images = set()
@@ -66,7 +71,7 @@ class ImageViewerController:
             self._flagged_images = self._load_flags()
             self._occluders = self._load_occluders()
             self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
-            if self.loader.num_images() < 5000:
+            if self._project_mode != 'seg' and self.loader.num_images() < 5000:
                 cleaned = self.loader.clean_label_files()
                 if cleaned:
                     self.view.update_info_bar(f"Cleaned {cleaned} corrupted label file(s) on launch.")
@@ -83,9 +88,10 @@ class ImageViewerController:
         self.root.bind('<a>', lambda e: self.show_prev_image())
         self.root.bind('<o>', lambda e: self.show_prev_image())
         self.root.bind('<e>', lambda e: self.toggle_edit_mode())
-        self.root.bind('<g>', lambda e: self.delete_selected_bbox())
+        self.root.bind('<g>', lambda e: self.delete_selected_annotation())
         self.root.bind('<q>', lambda e: self.toggle_fullscreen())
         self.root.bind('<Control-s>', lambda e: self.save_bounding_boxes())
+        self.root.bind('<Return>', lambda e: self._handle_enter())
         self.root.bind('<Control-b>', lambda e: self.delete_current_image())
         self.root.bind('<Control-z>', lambda e: self.undo_last_action())
         self.root.bind('<space>', lambda e: self.toggle_slideshow())
@@ -94,14 +100,14 @@ class ImageViewerController:
         self.root.bind('<Control-F>', lambda e: self.jump_to_prev_flagged())
         self.root.bind('<Control-g>', lambda e: self.jump_to_image_by_number())
         self.root.bind('<v>', lambda e: self.toggle_cover_mode())
-        self.root.bind('<Escape>', lambda e: self.deselect_bbox())
+        self.root.bind('<Escape>', lambda e: self.deselect_annotation())
 
         # Bind numeric keys for class selection when in edit mode
         for i in range(10):
             self.root.bind(f'<Key-{i}>', self.class_shortcut)
 
     def show_image(self):
-        """Displays the current image and its bounding boxes."""
+        """Displays the current image and its annotations."""
         if self.loader is None:
             return
         if not self.loader.has_images():
@@ -110,17 +116,30 @@ class ImageViewerController:
             return
 
         image_path, label_path = self.loader.get_image_and_label(self.current_index)
-        self.editor.load_image(image_path, label_path, fullscreen=self.fullscreen)
-        self.loader.save_last_image_index(self.current_index)
-        self.editor.annotations_visible = True
-        self.view.update_annotations_button(True)
-        self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
+
+        if self._project_mode == 'seg':
+            seg_label_path = self.loader.get_seg_label_path(self.current_index)
+            self.editor.load_image(image_path, seg_label_path, fullscreen=self.fullscreen)
+            self.loader.save_last_image_index(self.current_index)
+            self.editor.annotations_visible = True
+            self.view.update_annotations_button(True)
+            self.view.update_seg_annotation_list(
+                self.editor.segs, self.loader.get_class_names(),
+                on_delete=self.delete_seg_by_index, on_select=self.select_seg_by_index
+            )
+        else:
+            self.editor.load_image(image_path, label_path, fullscreen=self.fullscreen)
+            self.loader.save_last_image_index(self.current_index)
+            self.editor.annotations_visible = True
+            self.view.update_annotations_button(True)
+            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
+            self._draw_current_occluders()
+            self._refresh_occluder_list()
+
         self.view.update_path(image_path)
         filename = self.loader.image_files[self.current_index]
         self.view.update_flag_button(filename in self._flagged_images, len(self._flagged_images))
         self._update_progress()
-        self._draw_current_occluders()
-        self._refresh_occluder_list()
 
     def show_next_image(self):
         if self.loader is None:
@@ -145,24 +164,27 @@ class ImageViewerController:
     def toggle_edit_mode(self):
         """Toggles between edit and view modes."""
         self.editor.toggle_edit_mode()
-        if not self.editor.edit_mode:
+        if not self.editor.edit_mode and hasattr(self.editor, 'clear_resize_handles'):
             self.editor.clear_resize_handles()
         self.view.update_edit_button(self.editor.edit_mode)
-        self.view.update_cover_mode_button(self.editor.occlude_mode)
+        occlude_active = getattr(self.editor, 'occlude_mode', False)
+        self.view.update_cover_mode_button(occlude_active)
         self.view.update_info_bar("Edit Mode Activated" if self.editor.edit_mode else "Edit Mode Deactivated")
 
     def set_current_class(self, class_num):
-        """Sets the active class and reassigns selected bbox if one is selected."""
+        """Sets the active class and reassigns selected annotation if one is selected."""
         if self.loader is None:
             return
         self.editor.current_class = class_num
-        if self.editor.selected_bbox:
+        selected = (getattr(self.editor, 'selected_bbox', None)
+                    if self._project_mode != 'seg' else None)
+        if selected:
             if not self.editor.edit_mode:
                 self.view.update_info_bar("Enable Edit Mode to change annotation class.")
                 return
             self.change_selected_bbox_class(class_num)
         else:
-            self.view.update_info_bar(f"Class set to {class_num}: {self.loader.class_mapping[class_num]}")
+            self.view.update_info_bar(f"Class set to {class_num}: {self.loader.class_mapping.get(class_num, str(class_num))}")
 
     def change_selected_bbox_class(self, class_num):
         """Changes the class of the currently selected bounding box."""
@@ -213,28 +235,69 @@ class ImageViewerController:
             self.set_current_class(class_num)
 
     def save_bounding_boxes(self):
-        """Saves bounding boxes to the corresponding label file."""
+        """Saves current annotations (bbox or seg) to their label file."""
         if self.loader is None:
             return
+        if self._project_mode == 'seg':
+            self._save_seg_annotations()
+            return
         label_path = self.loader.get_label_path(self.current_index)
-
         img_width, img_height = self.editor.original_width, self.editor.original_height
-
         with open(label_path, 'w') as f:
             for bbox in self.editor.bboxes:
-                yolo_bbox = bbox.to_normalized(img_width, img_height)
-                f.write(yolo_bbox + "\n")
+                f.write(bbox.to_normalized(img_width, img_height) + '\n')
+        self.view.update_info_bar("Saved successfully.")
+
+    def _save_seg_annotations(self):
+        seg_label_path = self.loader.get_seg_label_path(self.current_index)
+        os.makedirs(os.path.dirname(seg_label_path), exist_ok=True)
+        img_width, img_height = self.editor.original_width, self.editor.original_height
+        with open(seg_label_path, 'w') as f:
+            for seg in self.editor.segs:
+                f.write(seg.to_normalized(img_width, img_height) + '\n')
         self.view.update_info_bar("Saved successfully.")
 
     def _apply_project_config(self, folder):
-        """Loads project.json for the given folder and applies class names and colours."""
+        """Loads project.json for the given folder and applies mode, class names and colours."""
         config = ProjectManager.load_project_config(folder)
         if config:
+            mode = config.get('mode', 'bbox')
             class_list = config.get('classes', [])
+            self._project_mode = mode
+            self._swap_editor_if_needed(mode)
             self.loader.class_mapping = {c['id']: c['name'] for c in class_list}
+            self.editor.class_mapping = self.loader.class_mapping
             self.editor.class_colors = {c['id']: c['color'] for c in class_list}
         else:
+            self._project_mode = 'bbox'
+            self._swap_editor_if_needed('bbox')
             self.editor.class_colors = {}
+
+    def _swap_editor_if_needed(self, mode):
+        """Swap the canvas editor if the project mode has changed."""
+        if mode == self._editor_type:
+            return
+        # Unbind the outgoing editor's resize handler before creating the replacement
+        try:
+            self.root.unbind('<Configure>')
+        except Exception:
+            pass
+        self.canvas.pack_forget()
+
+        if mode == 'seg':
+            new_editor = SegEditor(self.root)
+            new_editor.on_seg_added = self._on_seg_added
+            self.view.update_info_bar("Segmentation project loaded. Click in Edit Mode to draw polygons.")
+        else:
+            new_editor = BoundingBoxEditor(self.root)
+            new_editor.on_bbox_added = self._on_bbox_added
+            new_editor.on_occluder_added = self._on_occluder_added
+
+        self.editor = new_editor
+        self.canvas = self.editor.canvas
+        self.canvas.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        self.editor.class_mapping = self.loader.class_mapping if self.loader else {}
+        self._editor_type = mode
 
     def _load_folder(self, folder):
         """Reinitialises loader and editor state for a new folder. Returns True on success."""
@@ -256,7 +319,7 @@ class ImageViewerController:
         self._persistent_occluders.clear()
         AppConfig.set_last_folder(folder)
         self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
-        if self.loader.num_images() < 5000:
+        if self._project_mode != 'seg' and self.loader.num_images() < 5000:
             cleaned = self.loader.clean_label_files()
             if cleaned:
                 self.view.update_info_bar(f"Cleaned {cleaned} corrupted label file(s).")
@@ -444,7 +507,7 @@ class ImageViewerController:
 
     def _inject_persistent_bboxes(self):
         """Add any pinned bbox templates into the current frame if not already present."""
-        if not self._persistent_bboxes or self.loader is None:
+        if not self._persistent_bboxes or self.loader is None or self._project_mode == 'seg':
             return
         existing = {
             (b.x1, b.y1, b.x2, b.y2, int(b.class_num))
@@ -515,7 +578,7 @@ class ImageViewerController:
         self._refresh_occluder_list()
 
     def _inject_persistent_occluders(self):
-        if not self._persistent_occluders or self.loader is None:
+        if not self._persistent_occluders or self.loader is None or self._project_mode == 'seg':
             return
         filename = self.loader.image_files[self.current_index]
         existing = set(self._occluders.get(filename, []))
@@ -531,7 +594,7 @@ class ImageViewerController:
             self._refresh_occluder_list()
 
     def toggle_cover_mode(self):
-        if self.loader is None:
+        if self.loader is None or self._project_mode == 'seg':
             return
         self.editor.toggle_occlude_mode()
         if self.editor.occlude_mode and not self.editor.edit_mode:
@@ -889,7 +952,86 @@ class ImageViewerController:
             self.editor.selected_bbox = None
             self.editor.clear_resize_handles()
 
+    def deselect_annotation(self):
+        if self._project_mode == 'seg':
+            if hasattr(self.editor, '_deselect'):
+                self.editor._deselect()
+            if hasattr(self.editor, 'cancel_drawing'):
+                self.editor.cancel_drawing()
+        else:
+            self.deselect_bbox()
+
+    def delete_selected_annotation(self):
+        if self._project_mode == 'seg':
+            self.delete_selected_seg()
+        else:
+            self.delete_selected_bbox()
+
+    def delete_selected_seg(self):
+        if not self.editor.edit_mode:
+            self.view.update_info_bar("Enable Edit Mode to delete annotations.")
+            return
+        if not hasattr(self.editor, 'selected_seg') or self.editor.selected_seg is None:
+            self.view.update_info_bar("No annotation selected.")
+            return
+        seg = self.editor.selected_seg
+        if seg.polygon_id:
+            self.canvas.delete(seg.polygon_id)
+        if seg.text_id:
+            self.canvas.delete(seg.text_id)
+        if seg in self.editor.segs:
+            self.editor.segs.remove(seg)
+        self.editor.selected_seg = None
+        self.editor._clear_vertex_handles()
+        self.view.update_seg_annotation_list(
+            self.editor.segs, self.loader.get_class_names(),
+            on_delete=self.delete_seg_by_index, on_select=self.select_seg_by_index
+        )
+        self.view.update_info_bar("Deleted successfully.")
+
+    def delete_seg_by_index(self, index):
+        if not self.editor.edit_mode:
+            self.view.update_info_bar("Enable Edit Mode to delete annotations.")
+            return
+        if not hasattr(self.editor, 'segs') or not (0 <= index < len(self.editor.segs)):
+            return
+        seg = self.editor.segs[index]
+        if seg.polygon_id:
+            self.canvas.delete(seg.polygon_id)
+        if seg.text_id:
+            self.canvas.delete(seg.text_id)
+        if self.editor.selected_seg is seg:
+            self.editor.selected_seg = None
+            self.editor._clear_vertex_handles()
+        self.editor.segs.pop(index)
+        self.view.update_seg_annotation_list(
+            self.editor.segs, self.loader.get_class_names(),
+            on_delete=self.delete_seg_by_index, on_select=self.select_seg_by_index
+        )
+        self.view.update_info_bar("Deleted successfully.")
+
+    def select_seg_by_index(self, index):
+        if hasattr(self.editor, 'segs') and 0 <= index < len(self.editor.segs):
+            self.editor._select_seg(self.editor.segs[index])
+
+    def _on_seg_added(self):
+        if self.loader is None:
+            return
+        self.view.update_seg_annotation_list(
+            self.editor.segs, self.loader.get_class_names(),
+            on_delete=self.delete_seg_by_index, on_select=self.select_seg_by_index
+        )
+        if self.autosave:
+            self.save_bounding_boxes()
+
+    def _handle_enter(self):
+        if self._project_mode == 'seg' and hasattr(self.editor, 'close_polygon_if_drawing'):
+            self.editor.close_polygon_if_drawing()
+
     def select_annotation_by_index(self, index):
+        if self._project_mode == 'seg':
+            self.select_seg_by_index(index)
+            return
         if 0 <= index < len(self.editor.bboxes):
             self.editor.selected_bbox = self.editor.bboxes[index]
             if self.editor.edit_mode:
@@ -898,7 +1040,10 @@ class ImageViewerController:
                 self.editor.clear_resize_handles()
 
     def delete_annotation_by_index(self, index):
-        """Deletes a bounding box by its index in the list."""
+        """Deletes an annotation by its index in the list."""
+        if self._project_mode == 'seg':
+            self.delete_seg_by_index(index)
+            return
         if not self.editor.edit_mode:
             self.view.update_info_bar("Enable Edit Mode to delete annotations.")
             return
@@ -975,7 +1120,7 @@ class ImageViewerController:
 
     def undo_last_action(self):
         """Undoes the last action by reversing it."""
-        if self.loader is None:
+        if self.loader is None or self._project_mode == 'seg':
             return
         if not self.action_stack:
             print("No actions to undo.")

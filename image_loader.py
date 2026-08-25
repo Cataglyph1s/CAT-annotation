@@ -99,6 +99,11 @@ class ImageLoader:
     def get_label_path(self, index):
         return os.path.join(self.labels_folder, self.image_files[index].rsplit('.', 1)[0] + '.txt')
 
+    def get_seg_label_path(self, index):
+        """Returns the path in labels_seg/ for the given image index (standard project layout)."""
+        seg_dir = os.path.join(os.path.dirname(self.labels_folder), 'labels_seg')
+        return os.path.join(seg_dir, self.image_files[index].rsplit('.', 1)[0] + '.txt')
+
     def delete_image(self, index):
         """Deletes both the image and its corresponding label file."""
         image_path, label_path = self.get_image_and_label(index)

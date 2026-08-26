@@ -269,8 +269,9 @@ class ImageViewerController:
             self.editor.class_mapping = self.loader.class_mapping
             self.editor.class_colors = {c['id']: c['color'] for c in class_list}
         else:
-            self._project_mode = 'bbox'
-            self._swap_editor_if_needed('bbox')
+            mode = 'seg' if (self.loader and self.loader.is_seg_dataset()) else 'bbox'
+            self._project_mode = mode
+            self._swap_editor_if_needed(mode)
             self.editor.class_colors = {}
 
     def _swap_editor_if_needed(self, mode):

@@ -38,21 +38,22 @@ class ImageLoader:
         return folder, folder
 
     def _load_class_mapping(self):
-        """Return class mapping from dataset.yaml if found, else the default."""
+        """Return class mapping from dataset.yaml / data.yaml if found, else the default."""
         parent = os.path.dirname(self.folder)
         grandparent = os.path.dirname(parent)
         for directory in [self.folder, parent, grandparent]:
-            yaml_path = os.path.join(directory, "dataset.yaml")
-            if not os.path.exists(yaml_path):
-                continue
-            mapping = self._parse_yaml_names(yaml_path)
-            if mapping:
-                return mapping
+            for yaml_name in ('dataset.yaml', 'data.yaml'):
+                yaml_path = os.path.join(directory, yaml_name)
+                if not os.path.exists(yaml_path):
+                    continue
+                mapping = self._parse_yaml_names(yaml_path)
+                if mapping:
+                    return mapping
         return dict(_DEFAULT_CLASS_MAPPING)
 
     @staticmethod
     def _parse_yaml_names(yaml_path):
-        """Minimal parser for the 'names' block of a YOLO dataset.yaml."""
+        """Minimal parser for the 'names' block of a YOLO dataset.yaml / data.yaml."""
         try:
             with open(yaml_path, 'r', encoding='utf-8', errors='ignore') as f:
                 lines = f.readlines()
@@ -60,6 +61,16 @@ class ImageLoader:
             for line in lines:
                 stripped = line.strip()
                 if stripped.startswith('names:'):
+                    # Handle inline list: names: ['a', 'b'] or names: [a, b]
+                    after = stripped[len('names:'):].strip()
+                    if after.startswith('[') and after.endswith(']'):
+                        inner = after[1:-1]
+                        for item in inner.split(','):
+                            name = item.strip().strip("'\"")
+                            if name:
+                                result[list_idx] = name
+                                list_idx += 1
+                        break
                     in_names = True
                     continue
                 if in_names:
@@ -100,9 +111,26 @@ class ImageLoader:
         return os.path.join(self.labels_folder, self.image_files[index].rsplit('.', 1)[0] + '.txt')
 
     def get_seg_label_path(self, index):
-        """Returns the path in labels_seg/ for the given image index (standard project layout)."""
+        """Returns the seg label path. Uses labels_seg/ for CAT projects; falls back to labels/ for raw YOLO seg datasets."""
         seg_dir = os.path.join(os.path.dirname(self.labels_folder), 'labels_seg')
+        if not os.path.isdir(seg_dir):
+            seg_dir = self.labels_folder
         return os.path.join(seg_dir, self.image_files[index].rsplit('.', 1)[0] + '.txt')
+
+    def is_seg_dataset(self):
+        """Return True if the first non-empty label file has more than 5 columns (polygon format)."""
+        for fname in self.image_files[:10]:
+            lbl = os.path.join(self.labels_folder, fname.rsplit('.', 1)[0] + '.txt')
+            if not os.path.exists(lbl):
+                continue
+            with open(lbl, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) > 5:
+                        return True
+                    if len(parts) == 5:
+                        return False
+        return False
 
     def delete_image(self, index):
         """Deletes both the image and its corresponding label file."""

@@ -25,6 +25,11 @@ class ImageViewerView:
         self.app_menu.add_command(label="Open Folder...", command=self.controller.open_folder)
         self.app_menu.add_command(label="Import Video...", command=self.controller.open_video_importer)
         self.app_menu.add_separator()
+
+        self._recent_menu = tk.Menu(self.app_menu, tearoff=0,
+                                    postcommand=self._populate_recent_menu)
+        self.app_menu.add_cascade(label="Recent Projects", menu=self._recent_menu)
+        self.app_menu.add_separator()
         self.app_menu.add_command(label="Add Set to Project...", command=self.controller.open_add_set_dialog)
 
         # Info bar at the bottom
@@ -290,6 +295,19 @@ class ImageViewerView:
         self.controller.add_tooltip(self.btn_cover_mode,
                                     "Shortcut: v  |  Draw white covers over static background objects")
 
+
+    def _populate_recent_menu(self):
+        self._recent_menu.delete(0, tk.END)
+        folders = self.controller.get_recent_folders()
+        if not folders:
+            self._recent_menu.add_command(label="(no recent projects)", state=tk.DISABLED)
+            return
+        for folder in folders:
+            label = folder if len(folder) <= 60 else '...' + folder[-57:]
+            self._recent_menu.add_command(
+                label=label,
+                command=lambda f=folder: self.controller.open_recent_folder(f)
+            )
 
     def _on_class_row_click(self, class_num):
         self.select_class(class_num)

@@ -70,6 +70,7 @@ class ImageViewerController:
             self._apply_project_config(folder)
             self._flagged_images = self._load_flags()
             self._occluders = self._load_occluders()
+            AppConfig.add_recent_folder(folder)
             self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
             if self._project_mode != 'seg' and self.loader.num_images() < 5000:
                 cleaned = self.loader.clean_label_files()
@@ -319,6 +320,7 @@ class ImageViewerController:
         self._occluders = self._load_occluders()
         self._persistent_occluders.clear()
         AppConfig.set_last_folder(folder)
+        AppConfig.add_recent_folder(folder)
         self.view.populate_class_list(self.loader.class_mapping, self.editor.class_colors)
         if self._project_mode != 'seg' and self.loader.num_images() < 5000:
             cleaned = self.loader.clean_label_files()
@@ -929,6 +931,12 @@ class ImageViewerController:
         if not folder:
             return
         self._load_folder(folder)
+
+    def open_recent_folder(self, folder):
+        self._load_folder(folder)
+
+    def get_recent_folders(self):
+        return AppConfig.get_recent_folders()
 
     def toggle_autosave(self):
         self.autosave = not self.autosave

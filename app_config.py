@@ -38,3 +38,17 @@ class AppConfig:
         config = AppConfig._load()
         config["last_folder"] = path
         AppConfig._save(config)
+
+    @staticmethod
+    def get_recent_folders(max_items=10):
+        return AppConfig._load().get("recent_folders", [])[:max_items]
+
+    @staticmethod
+    def add_recent_folder(path, max_items=10):
+        config = AppConfig._load()
+        recent = config.get("recent_folders", [])
+        if path in recent:
+            recent.remove(path)
+        recent.insert(0, path)
+        config["recent_folders"] = recent[:max_items]
+        AppConfig._save(config)

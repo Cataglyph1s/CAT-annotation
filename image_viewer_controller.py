@@ -112,8 +112,7 @@ class ImageViewerController:
         if self.loader is None:
             return
         if not self.loader.has_images():
-            messagebox.showinfo("Info", "No images left.")
-            self.root.quit()
+            self.view.update_info_bar("No images found in this folder.")
             return
 
         image_path, label_path = self.loader.get_image_and_label(self.current_index)
@@ -237,7 +236,7 @@ class ImageViewerController:
 
     def save_bounding_boxes(self):
         """Saves current annotations (bbox or seg) to their label file."""
-        if self.loader is None:
+        if self.loader is None or not self.loader.has_images():
             return
         if self._project_mode == 'seg':
             self._save_seg_annotations()

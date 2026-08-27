@@ -1093,9 +1093,12 @@ class ImageViewerController:
             "label_path": label_path,
         }))
         self.loader.delete_image(index)
-        # Clear bboxes before showing the next image so autosave cannot write
+        # Clear annotations before showing the next image so autosave cannot write
         # the deleted image's annotations onto the file that now occupies this index.
-        self.editor.bboxes.clear()
+        if self._project_mode == 'seg':
+            self.editor.segs.clear()
+        else:
+            self.editor.bboxes.clear()
         self.current_index = min(index, self.loader.num_images() - 1)
         self.show_image()
 

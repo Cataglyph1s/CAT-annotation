@@ -42,6 +42,8 @@ class SegEditor:
         self.canvas.bind('<Button-1>', self._on_left_click)
         self.canvas.bind('<Double-Button-1>', self._on_double_click)
         self.canvas.bind('<Motion>', self._on_mouse_move)
+        self.canvas.bind('<B1-Motion>', self._drag_vertex)
+        self.canvas.bind('<ButtonRelease-1>', self._end_drag_vertex)
         self.canvas.bind('<Button-3>', self._on_right_click)
         self.root.bind('<Configure>', self._on_resize)
 
@@ -274,8 +276,6 @@ class SegEditor:
                                         tags='vertex_handle')
             self.canvas.tag_bind(h, '<Button-1>',
                                  lambda e, idx=vi: self._start_drag_vertex(e, idx))
-            self.canvas.tag_bind(h, '<B1-Motion>', self._drag_vertex)
-            self.canvas.tag_bind(h, '<ButtonRelease-1>', self._end_drag_vertex)
             self._vertex_handles.append(h)
 
     def _clear_vertex_handles(self):
@@ -292,13 +292,33 @@ class SegEditor:
         if self._drag_vertex_idx is None or self.selected_seg is None:
             return
         seg = self.selected_seg
+        idx = self._drag_vertex_idx
         ix = max(0.0, min(float(self.original_width),
                           (event.x - self.x_offset) / self.scale_factor))
         iy = max(0.0, min(float(self.original_height),
                           (event.y - self.y_offset) / self.scale_factor))
-        seg.points[self._drag_vertex_idx] = (ix, iy)
-        self._redraw_seg(seg)
-        self._show_vertex_handles(seg)
+        seg.points[idx] = (ix, iy)
+
+        # Update polygon outline in-place (no delete/recreate — keeps drag bindings intact)
+        canvas_pts = []
+        for x, y in seg.points:
+            canvas_pts.extend([x * self.scale_factor + self.x_offset,
+                                y * self.scale_factor + self.y_offset])
+        if seg.polygon_id:
+            self.canvas.coords(seg.polygon_id, *canvas_pts)
+        if seg.text_id:
+            n = len(seg.points)
+            cx = sum(canvas_pts[i] for i in range(0, len(canvas_pts), 2)) / n
+            cy = sum(canvas_pts[i] for i in range(1, len(canvas_pts), 2)) / n
+            self.canvas.coords(seg.text_id, cx, cy)
+
+        # Move just the dragged handle
+        if idx < len(self._vertex_handles):
+            r = 5
+            ncx = ix * self.scale_factor + self.x_offset
+            ncy = iy * self.scale_factor + self.y_offset
+            self.canvas.coords(self._vertex_handles[idx],
+                                ncx - r, ncy - r, ncx + r, ncy + r)
 
     def _end_drag_vertex(self, event):
         self._drag_vertex_idx = None

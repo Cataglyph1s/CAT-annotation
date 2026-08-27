@@ -218,7 +218,10 @@ class SegEditor:
             self._deselect()
             self._drawing = True
             self._pending_canvas_pts = []
-        self._pending_canvas_pts.append((event.x, event.y))
+        ix, iy = self._clamp_to_image(event.x, event.y)
+        cx = ix * self.scale_factor + self.x_offset
+        cy = iy * self.scale_factor + self.y_offset
+        self._pending_canvas_pts.append((cx, cy))
         self._update_preview()
 
     def _on_double_click(self, event):
@@ -293,10 +296,7 @@ class SegEditor:
             return
         seg = self.selected_seg
         idx = self._drag_vertex_idx
-        ix = max(0.0, min(float(self.original_width),
-                          (event.x - self.x_offset) / self.scale_factor))
-        iy = max(0.0, min(float(self.original_height),
-                          (event.y - self.y_offset) / self.scale_factor))
+        ix, iy = self._clamp_to_image(event.x, event.y)
         seg.points[idx] = (ix, iy)
 
         # Update polygon outline in-place (no delete/recreate — keeps drag bindings intact)
@@ -363,6 +363,16 @@ class SegEditor:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _clamp_to_image(self, canvas_x, canvas_y):
+        """Convert canvas coords to image-pixel coords, clamped to image bounds."""
+        if self.scale_factor == 0:
+            return 0.0, 0.0
+        ix = max(0.0, min(float(self.original_width - 1),
+                          (canvas_x - self.x_offset) / self.scale_factor))
+        iy = max(0.0, min(float(self.original_height - 1),
+                          (canvas_y - self.y_offset) / self.scale_factor))
+        return ix, iy
 
     @staticmethod
     def _point_in_polygon(px, py, points):

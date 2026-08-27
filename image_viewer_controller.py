@@ -1082,6 +1082,13 @@ class ImageViewerController:
         if os.path.exists(label_path):
             with open(label_path, 'r', encoding='utf-8') as f:
                 label_data = f.read()
+        seg_label_path = None
+        seg_label_data = None
+        if self._project_mode == 'seg':
+            seg_label_path = self.loader.get_seg_label_path(index)
+            if os.path.exists(seg_label_path):
+                with open(seg_label_path, 'r', encoding='utf-8') as f:
+                    seg_label_data = f.read()
         if len(self.action_stack) >= self.max_actions:
             self.action_stack.pop(0)
         self.action_stack.append(("delete_image", {
@@ -1091,8 +1098,12 @@ class ImageViewerController:
             "label_data": label_data,
             "image_path": image_path,
             "label_path": label_path,
+            "seg_label_path": seg_label_path,
+            "seg_label_data": seg_label_data,
         }))
         self.loader.delete_image(index)
+        if self._project_mode == 'seg' and seg_label_path and os.path.exists(seg_label_path):
+            os.remove(seg_label_path)
         # Clear annotations before showing the next image so autosave cannot write
         # the deleted image's annotations onto the file that now occupies this index.
         if self._project_mode == 'seg':
@@ -1131,10 +1142,14 @@ class ImageViewerController:
 
     def undo_last_action(self):
         """Undoes the last action by reversing it."""
-        if self.loader is None or self._project_mode == 'seg':
+        if self.loader is None:
             return
         if not self.action_stack:
             print("No actions to undo.")
+            return
+
+        # In seg mode only delete_image is undoable
+        if self._project_mode == 'seg' and self.action_stack[-1][0] != 'delete_image':
             return
 
         action_type, bbox = self.action_stack.pop()
@@ -1183,9 +1198,18 @@ class ImageViewerController:
             if data["label_data"] is not None:
                 with open(data["label_path"], 'w', encoding='utf-8') as f:
                     f.write(data["label_data"])
+            if data.get("seg_label_data") is not None:
+                with open(data["seg_label_path"], 'w', encoding='utf-8') as f:
+                    f.write(data["seg_label_data"])
             insert_at = min(data["index"], len(self.loader.image_files))
             self.loader.image_files.insert(insert_at, data["filename"])
             self.current_index = insert_at
             self.show_image()
             self.view.update_info_bar(f"Undo: restored {data['filename']}")
-            self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)
+            if self._project_mode == 'seg':
+                self.view.update_seg_annotation_list(
+                    self.editor.segs, self.loader.get_class_names(),
+                    on_delete=self.delete_seg_by_index, on_select=self.select_seg_by_index
+                )
+            else:
+                self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(), self._persistent_bboxes)

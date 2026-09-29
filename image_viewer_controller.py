@@ -645,7 +645,26 @@ class ImageViewerController:
     def convert_tiny_boxes_and_burn(self):
         if self.loader is None:
             return
-        TINY_AREA = 0.0025
+        TRAIN_IMGSZ = 640  # matches imgsz used in Training_samira_detect_v7.py
+
+        from tkinter import simpledialog
+        min_train_px = simpledialog.askinteger(
+            "Convert tiny boxes",
+            "Minimum box dimension (px) at the 640x640 training input "
+            "(after letterbox-resize).\nBoxes smaller than this in their "
+            "shortest dimension are treated as tiny:",
+            initialvalue=12, minvalue=1, maxvalue=640,
+            parent=self.root,
+        )
+        if min_train_px is None:
+            return
+
+        def is_tiny(iw, ih, w_norm, h_norm):
+            scale = TRAIN_IMGSZ / max(iw, ih)
+            train_w = w_norm * iw * scale
+            train_h = h_norm * ih * scale
+            return min(train_w, train_h) < min_train_px
+
         all_files = self.loader.image_files
         total = len(all_files)
 
@@ -659,21 +678,33 @@ class ImageViewerController:
                 continue
             with open(lbl, 'r') as f:
                 lines = [l.strip() for l in f if l.strip()]
-            tiny = [l for l in lines if len(l.split()) == 5
-                    and float(l.split()[3]) * float(l.split()[4]) < TINY_AREA]
+            parsed = [l.split() for l in lines if len(l.split()) == 5]
+            if not parsed:
+                continue
+            src = os.path.join(self.loader.images_folder, filename)
+            try:
+                with Image.open(src) as img:
+                    iw, ih = img.size
+            except Exception:
+                continue
+            tiny = [p for p in parsed
+                    if is_tiny(iw, ih, float(p[3]), float(p[4]))]
             if tiny:
                 tiny_count += len(tiny)
                 affected_images += 1
 
         if tiny_count == 0:
             messagebox.showinfo("Convert tiny boxes",
-                                "No boxes below the threshold found.")
+                                f"No boxes below {min_train_px}px "
+                                f"(at {TRAIN_IMGSZ}x{TRAIN_IMGSZ} training "
+                                f"input) found.")
             return
 
         masked_dir = os.path.join(self.loader.folder, "images_masked")
         if not messagebox.askyesno(
                 "Convert tiny boxes → occluders + burn",
-                f"Found {tiny_count} box(es) with area < {TINY_AREA} across "
+                f"Found {tiny_count} box(es) under {min_train_px}px "
+                f"(at {TRAIN_IMGSZ}x{TRAIN_IMGSZ} training input) across "
                 f"{affected_images} image(s).\n\n"
                 f"They will be:\n"
                 f"  • Removed from label files\n"
@@ -711,21 +742,27 @@ class ImageViewerController:
             with open(lbl, 'r') as f:
                 lines = [l.strip() for l in f if l.strip()]
 
+            src = os.path.join(self.loader.images_folder, filename)
+            try:
+                with Image.open(src) as img:
+                    iw, ih = img.size
+            except Exception:
+                if i % 50 == 0:
+                    prog_bar['value'] = i + 1
+                    prog_label.config(text=f"{i + 1:,} / {total:,}")
+                    prog_win.update()
+                continue
+
             keep = []
             tiny = []
             for l in lines:
                 parts = l.split()
-                if len(parts) == 5 and float(parts[3]) * float(parts[4]) < TINY_AREA:
+                if len(parts) == 5 and is_tiny(iw, ih, float(parts[3]), float(parts[4])):
                     tiny.append(parts)
                 else:
                     keep.append(l)
 
             if tiny:
-                # Get image dimensions to convert normalised → pixel coords
-                src = os.path.join(self.loader.images_folder, filename)
-                with Image.open(src) as img:
-                    iw, ih = img.size
-
                 existing = self._occluders.get(filename, [])
                 for parts in tiny:
                     xc, yc, w, h = float(parts[1]), float(parts[2]), \

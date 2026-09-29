@@ -101,6 +101,7 @@ class ImageViewerController:
         self.root.bind('<Control-F>', lambda e: self.jump_to_prev_flagged())
         self.root.bind('<Control-g>', lambda e: self.jump_to_image_by_number())
         self.root.bind('<v>', lambda e: self.toggle_cover_mode())
+        self.root.bind('<b>', lambda e: self.toggle_seg_tool_mode())
         self.root.bind('<Escape>', lambda e: self.deselect_annotation())
 
         # Bind numeric keys for class selection when in edit mode
@@ -607,6 +608,17 @@ class ImageViewerController:
             self.view.update_info_bar("Cover Mode ON — draw white boxes over static background objects.")
         else:
             self.view.update_info_bar("Cover Mode OFF.")
+
+    def toggle_seg_tool_mode(self):
+        if self.loader is None or self._project_mode != 'seg':
+            return
+        mode = self.editor.toggle_tool_mode()
+        self.view.update_seg_tool_mode_button(mode == 'brush')
+        if mode == 'brush':
+            self.view.update_info_bar(
+                "Brush Mode ON — left = paint, right = erase, scroll = resize, double-click = finish.")
+        else:
+            self.view.update_info_bar("Brush Mode OFF — back to polygon drawing.")
 
     def toggle_occluder_persistent(self, index):
         if self.loader is None:

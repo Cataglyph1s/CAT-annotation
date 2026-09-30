@@ -2,6 +2,9 @@ import os
 import tkinter as tk
 from PIL import Image, ImageTk
 from bounding_box import BoundingBox
+from viewport import compute_axis
+
+MAX_ZOOM = 8.0
 
 class BoundingBoxEditor:
     def __init__(self, root, canvas_parent=None):
@@ -35,19 +38,38 @@ class BoundingBoxEditor:
         self.occlude_mode = False
         self.on_occluder_added = None  # callback(x1, y1, x2, y2) in image pixel coords
 
+        # Zoom / pan viewport state
+        self.zoom = 1.0
+        self.view_cx = 0.0
+        self.view_cy = 0.0
+        self._panning = False
+        self._pan_start = None  # (canvas_x, canvas_y, view_cx, view_cy) at drag start
+        self.on_viewport_changed = None
+
         # Bindings for bbox
         self.canvas.bind("<Button-1>", self.start_bbox)
         self.canvas.bind("<B1-Motion>", self.draw_bbox)
         self.canvas.bind("<ButtonRelease-1>", self.save_bbox)
         self.canvas.bind("<Button-3>", self.select_bbox)  # Right-click to select a bbox
 
-        # Bind to handle window resize events
-        self.root.bind("<Configure>", self.on_resize)
+        # Zoom / pan bindings
+        self.canvas.bind("<Control-MouseWheel>", self._on_ctrl_wheel)
+        self.canvas.bind("<Button-2>", self._on_pan_start)
+        self.canvas.bind("<B2-Motion>", self._on_pan_motion)
+        self.canvas.bind("<ButtonRelease-2>", self._on_pan_end)
+
+        # Bind to the CANVAS's own size changes, not the root window's —
+        # the canvas resizes (and needs re-fitting) whenever a side panel is
+        # toggled too, which never changes root's own outer dimensions.
+        self.canvas.bind("<Configure>", self.on_resize)
 
     def on_resize(self, event):
-        """Handle the window resizing, ensuring the image and bounding boxes scale to fit."""
-        if event.widget is self.root and self.image:
-            self.load_image(self.image_path, self.label_path)
+        """Handle the canvas resizing (window resize or a side panel being
+        toggled), keeping the current zoom/pan and in-memory annotations
+        (re-cropping/re-scaling only) rather than reloading from disk."""
+        if event.widget is self.canvas and self.image:
+            self.current_bbox = None
+            self._render_viewport()
 
     def load_image(self, image_path, label_path=None, fullscreen=False):
         if self._loading:
@@ -63,6 +85,9 @@ class BoundingBoxEditor:
         self._resize_bbox = None
         self._drag_corner = None
         self._resizing = False
+        self.current_bbox = None
+        self._panning = False
+        self._pan_start = None
 
         # Open the image
         self.image = Image.open(image_path)
@@ -70,37 +95,12 @@ class BoundingBoxEditor:
         # Store original dimensions
         self.original_width, self.original_height = self.image.size
 
-        # update_idletasks processes layout/geometry only — avoids firing queued
-        # keypresses or slideshow timers mid-load which would corrupt autosave.
-        self.root.update_idletasks()
+        # Reset the viewport to fit-to-canvas, centered, on every new image
+        self.zoom = 1.0
+        self.view_cx = self.original_width / 2
+        self.view_cy = self.original_height / 2
 
-        # Get canvas size; fall back to image dimensions if canvas isn't laid out yet
-        # (winfo_width returns 1 before the window is fully rendered).
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-        if canvas_width <= 1 or canvas_height <= 1:
-            canvas_width, canvas_height = self.original_width, self.original_height
-
-        # Calculate the scaling factor to maintain aspect ratio
-        scale_factor = min(canvas_width / self.original_width, canvas_height / self.original_height)
-
-        # Resize the image proportionally to fit the canvas
-        new_width = int(self.original_width * scale_factor)
-        new_height = int(self.original_height * scale_factor)
-
-        # Resize the image and convert it to PhotoImage for tkinter
-        resized_image = self.image.resize((new_width, new_height), Image.LANCZOS)
-        self.tk_image = ImageTk.PhotoImage(resized_image)
-
-        # Center the image in the canvas
-        x_offset = (canvas_width - new_width) // 2
-        y_offset = (canvas_height - new_height) // 2
-        self.x_offset = x_offset
-        self.y_offset = y_offset
-        self.scale_factor = scale_factor
-        self.canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=self.tk_image)
-
-        # Load annotations (bounding boxes) after resizing the image
+        # Load annotations (bounding boxes) — drawing happens in _render_viewport()
         if label_path and os.path.exists(label_path):
             with open(label_path, 'r') as f:
                 for line in f:
@@ -110,9 +110,141 @@ class BoundingBoxEditor:
                     class_num, x_center, y_center, width, height = map(float, parts)
                     bbox = BoundingBox.from_normalized(class_num, x_center, y_center, width, height, self.original_width, self.original_height)
                     self.bboxes.append(bbox)
-                    self.draw_bounding_box(bbox, x_offset, y_offset, scale_factor)
 
+        self._render_viewport()
         self._loading = False
+
+    def _get_canvas_size(self):
+        """Current canvas size, falling back to the image dimensions if the
+        canvas isn't laid out yet (winfo_width returns 1 before the window
+        is fully rendered). Used consistently by every method that needs to
+        reason about canvas size, so zoom/pan math never disagrees with
+        what _render_viewport actually used."""
+        # update_idletasks processes layout/geometry only — avoids firing queued
+        # keypresses or slideshow timers mid-load which would corrupt autosave.
+        self.root.update_idletasks()
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        if canvas_width <= 1 or canvas_height <= 1:
+            return self.original_width, self.original_height
+        return canvas_width, canvas_height
+
+    def _render_viewport(self):
+        """Crop the original image to the current zoom/pan viewport and
+        redraw it plus all annotations. This is the single place that
+        recomputes scale_factor/x_offset/y_offset — every other coordinate
+        calculation in this class treats those as given."""
+        if self.image is None:
+            return
+
+        canvas_width, canvas_height = self._get_canvas_size()
+        fit_scale = min(canvas_width / self.original_width, canvas_height / self.original_height)
+        scale_factor = fit_scale * self.zoom
+
+        x_lo, x_hi, x_offset = compute_axis(self.original_width, canvas_width, scale_factor, self.view_cx)
+        y_lo, y_hi, y_offset = compute_axis(self.original_height, canvas_height, scale_factor, self.view_cy)
+
+        box = (int(round(x_lo)), int(round(y_lo)), max(int(round(x_hi)), int(round(x_lo)) + 1),
+               max(int(round(y_hi)), int(round(y_lo)) + 1))
+        cropped = self.image.crop(box)
+        disp_w = max(1, int(round((box[2] - box[0]) * scale_factor)))
+        disp_h = max(1, int(round((box[3] - box[1]) * scale_factor)))
+        resized_image = cropped.resize((disp_w, disp_h), Image.LANCZOS)
+        self.tk_image = ImageTk.PhotoImage(resized_image)
+
+        self.x_offset = x_offset
+        self.y_offset = y_offset
+        self.scale_factor = scale_factor
+
+        # Where to place the CROPPED image's own (0,0) on canvas. This is
+        # NOT x_offset/y_offset (those satisfy canvas = orig_px*scale+offset
+        # for annotations, which are in ORIGINAL image-pixel coords) — the
+        # cropped image's local (0,0) is at ORIGINAL pixel box[0]/box[1], so
+        # it must be placed at box[0]*scale+x_offset instead. These only
+        # coincide with x_offset/y_offset when nothing is actually cropped
+        # (box[0]==0); once zoomed/panned, this is ~0 (the crop fills the
+        # canvas) while x_offset/y_offset is some large negative pan offset.
+        self._img_place_x = box[0] * scale_factor + x_offset
+        self._img_place_y = box[1] * scale_factor + y_offset
+
+        self.canvas.delete("all")
+        self.canvas.create_image(self._img_place_x, self._img_place_y, anchor=tk.NW, image=self.tk_image)
+
+        self._redraw_annotations()
+
+        if self.on_viewport_changed:
+            self.on_viewport_changed()
+
+    def _redraw_annotations(self):
+        for bbox in self.bboxes:
+            self.draw_bounding_box(bbox, self.x_offset, self.y_offset, self.scale_factor)
+        if self.selected_bbox is not None:
+            self.canvas.itemconfig(self.selected_bbox.rect_id, outline="blue")
+            if self.edit_mode:
+                self.show_resize_handles(self.selected_bbox)
+
+    # ------------------------------------------------------------------
+    # Zoom / pan
+    # ------------------------------------------------------------------
+
+    def _set_zoom(self, new_zoom, view_cx=None, view_cy=None):
+        self.zoom = max(1.0, min(MAX_ZOOM, new_zoom))
+        if view_cx is not None:
+            self.view_cx = view_cx
+        if view_cy is not None:
+            self.view_cy = view_cy
+        self._render_viewport()
+
+    def _on_ctrl_wheel(self, event):
+        if self.image is None:
+            return
+        self.current_bbox = None  # cancel any in-progress draw, same as a resize would
+        cursor_img_x = (event.x - self.x_offset) / self.scale_factor
+        cursor_img_y = (event.y - self.y_offset) / self.scale_factor
+        factor = 1.15 if event.delta > 0 else 1 / 1.15
+        fit_scale = self.scale_factor / self.zoom if self.zoom else self.scale_factor
+        new_zoom = max(1.0, min(MAX_ZOOM, self.zoom * factor))
+        new_scale = fit_scale * new_zoom
+        canvas_width, canvas_height = self._get_canvas_size()
+        new_cx = cursor_img_x - (event.x - canvas_width / 2) / new_scale
+        new_cy = cursor_img_y - (event.y - canvas_height / 2) / new_scale
+        self._set_zoom(new_zoom, new_cx, new_cy)
+
+    def zoom_in(self):
+        if self.image is None:
+            return
+        self._set_zoom(self.zoom * 1.25)
+
+    def zoom_out(self):
+        if self.image is None:
+            return
+        self._set_zoom(self.zoom / 1.25)
+
+    def reset_zoom(self):
+        if self.image is None:
+            return
+        self._set_zoom(1.0, self.original_width / 2, self.original_height / 2)
+
+    def _on_pan_start(self, event):
+        if self.image is None:
+            return
+        self.current_bbox = None  # cancel any in-progress draw
+        self._panning = True
+        self._pan_start = (event.x, event.y, self.view_cx, self.view_cy)
+
+    def _on_pan_motion(self, event):
+        if not self._panning or self._pan_start is None:
+            return
+        sx, sy, start_cx, start_cy = self._pan_start
+        dx = (event.x - sx) / self.scale_factor
+        dy = (event.y - sy) / self.scale_factor
+        self.view_cx = start_cx - dx
+        self.view_cy = start_cy - dy
+        self._render_viewport()
+
+    def _on_pan_end(self, event):
+        self._panning = False
+        self._pan_start = None
 
     def draw_bounding_box(self, bbox, x_offset, y_offset, scale_factor):
         """Draw bounding boxes with proper scaling and offset."""

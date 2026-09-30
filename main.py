@@ -70,7 +70,7 @@ if __name__ == "__main__":
     #       - double click set name to switch to it (autosave changes on change)
     # 3) Add class colours to class column
     # 4) Add Users to project
-    # 5) Zoom function for high-res/small-object annotation (small buttons + shortcut)
+    # 5) Zoom function for high-res/small-object annotation (small buttons + shortcut) [DONE]
     # 6) Think about central save options
     # 7) Change name to CAT:annotation                                     [DONE]
     # -----------------------------------------------------------------------------------

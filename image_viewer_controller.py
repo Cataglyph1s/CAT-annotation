@@ -59,6 +59,7 @@ class ImageViewerController:
         # Callbacks from editor
         self.editor.on_bbox_added = self._on_bbox_added
         self.editor.on_occluder_added = self._on_occluder_added
+        self.editor.on_viewport_changed = self._on_viewport_changed
 
         # Bind keyboard shortcuts
         self.bind_shortcuts()
@@ -76,6 +77,13 @@ class ImageViewerController:
                 cleaned = self.loader.clean_label_files()
                 if cleaned:
                     self.view.update_info_bar(f"Cleaned {cleaned} corrupted label file(s) on launch.")
+            # Force a full layout pass so the canvas has its real, final size
+            # before the first image loads — update_idletasks() alone can
+            # still leave winfo_width()/height() at 1 right after deiconify,
+            # which would make the very first render use the wrong fit
+            # scale (only self-correcting, with a visible jump, on the next
+            # resize/zoom that re-queries canvas size).
+            self.root.update()
             self.show_image()
             self._populate_sets_sidebar()
         else:
@@ -102,6 +110,10 @@ class ImageViewerController:
         self.root.bind('<Control-g>', lambda e: self.jump_to_image_by_number())
         self.root.bind('<v>', lambda e: self.toggle_cover_mode())
         self.root.bind('<b>', lambda e: self.toggle_seg_tool_mode())
+        self.root.bind('<Control-equal>', lambda e: self.zoom_in())
+        self.root.bind('<Control-plus>', lambda e: self.zoom_in())
+        self.root.bind('<Control-minus>', lambda e: self.zoom_out())
+        self.root.bind('<Control-0>', lambda e: self.reset_zoom())
         self.root.bind('<Escape>', lambda e: self.deselect_annotation())
 
         # Bind numeric keys for class selection when in edit mode
@@ -279,11 +291,9 @@ class ImageViewerController:
         """Swap the canvas editor if the project mode has changed."""
         if mode == self._editor_type:
             return
-        # Unbind the outgoing editor's resize handler before creating the replacement
-        try:
-            self.root.unbind('<Configure>')
-        except Exception:
-            pass
+        # No explicit unbind needed here — each editor's resize handler is
+        # bound to its own canvas widget, not shared on root, so the
+        # outgoing editor's binding goes away with its (unpacked) canvas.
         self.canvas.pack_forget()
 
         if mode == 'seg':
@@ -295,6 +305,7 @@ class ImageViewerController:
             new_editor.on_bbox_added = self._on_bbox_added
             new_editor.on_occluder_added = self._on_occluder_added
 
+        new_editor.on_viewport_changed = self._on_viewport_changed
         self.editor = new_editor
         self.canvas = self.editor.canvas
         self.canvas.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
@@ -620,6 +631,28 @@ class ImageViewerController:
         else:
             self.view.update_info_bar("Brush Mode OFF — back to polygon drawing.")
 
+    def _on_viewport_changed(self):
+        """Fired by the editor after any zoom/pan/resize re-render. Redraws
+        overlays the controller owns that aren't in editor.bboxes/segs."""
+        if self._project_mode != 'seg':
+            self._draw_current_occluders()
+        self.view.update_zoom_label(self.editor.zoom)
+
+    def zoom_in(self):
+        if self.loader is None:
+            return
+        self.editor.zoom_in()
+
+    def zoom_out(self):
+        if self.loader is None:
+            return
+        self.editor.zoom_out()
+
+    def reset_zoom(self):
+        if self.loader is None:
+            return
+        self.editor.reset_zoom()
+
     def toggle_occluder_persistent(self, index):
         if self.loader is None:
             return
@@ -922,6 +955,12 @@ class ImageViewerController:
 
     def toggle_sets_panel(self):
         self.view.toggle_sets_panel()
+
+    def toggle_right_panel(self):
+        self.view.toggle_right_panel()
+
+    def toggle_bottom_toolbar(self):
+        self.view.toggle_bottom_toolbar()
 
     def open_add_set_dialog(self):
         """Opens the Add Set dialog for the currently loaded project."""

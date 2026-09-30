@@ -26,6 +26,14 @@ class ImageViewerView:
         self.app_menu.add_command(label="Import Video...", command=self.controller.open_video_importer)
         self.app_menu.add_separator()
 
+        self._dataset_tools_menu = tk.Menu(self.app_menu, tearoff=0)
+        self._dataset_tools_menu.add_command(
+            label="Burn to images_masked/", command=self.controller.burn_occluders_to_masked)
+        self._dataset_tools_menu.add_command(
+            label="Convert tiny boxes → occluders + burn", command=self.controller.convert_tiny_boxes_and_burn)
+        self.app_menu.add_cascade(label="Dataset Tools", menu=self._dataset_tools_menu)
+        self.app_menu.add_separator()
+
         self._recent_menu = tk.Menu(self.app_menu, tearoff=0,
                                     postcommand=self._populate_recent_menu)
         self.app_menu.add_cascade(label="Recent Projects", menu=self._recent_menu)
@@ -44,8 +52,23 @@ class ImageViewerView:
         self.progress_label.pack(side=tk.RIGHT, padx=20)
         self.info_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        # Bottom toolbar wrapper — a thin toggle strip stays visible above the
+        # button rows so the toolbar can be collapsed to reclaim canvas space.
+        self._bottom_wrapper = tk.Frame(root)
+        self._bottom_wrapper.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self._bottom_toolbar_visible = True
+        self.bottom_toggle_strip = tk.Frame(self._bottom_wrapper, height=10, bg='#cccccc', cursor='hand2')
+        self.bottom_toggle_strip.pack(side=tk.TOP, fill=tk.X)
+        self.bottom_toggle_strip.pack_propagate(False)
+        self._bottom_toggle_label = tk.Label(self.bottom_toggle_strip, text='▼', bg='#cccccc',
+                                             font=("Helvetica", 7), cursor='hand2')
+        self._bottom_toggle_label.pack(expand=True)
+        self.bottom_toggle_strip.bind('<Button-1>', lambda e: self.controller.toggle_bottom_toolbar())
+        self._bottom_toggle_label.bind('<Button-1>', lambda e: self.controller.toggle_bottom_toolbar())
+
         # Bottom layout for buttons
-        self.bottom_frame = tk.Frame(root)
+        self.bottom_frame = tk.Frame(self._bottom_wrapper)
         self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
 
         self.bottom_frame.columnconfigure(1, weight=1)
@@ -53,15 +76,38 @@ class ImageViewerView:
         # Auto-save pinned to the bottom left
         self.btn_autosave = tk.Button(self.bottom_frame, text="Auto-Save: ON",
                                       command=self.controller.toggle_autosave,
-                                      width=14, height=2, bg="lightgreen", relief=tk.RAISED)
+                                      width=14, height=1, bg="lightgreen", relief=tk.RAISED)
         self.btn_autosave.grid(row=0, column=0, sticky='w', padx=(0, 10))
 
         # Centre button bar
         self.button_frame = tk.Frame(self.bottom_frame)
         self.button_frame.grid(row=0, column=1)
 
-        # Right panel directly on root, packed before canvas
-        self.right_panel = tk.Frame(root, width=200, relief=tk.RIDGE, bd=2)
+        # Delete Image pinned to the bottom right (before Undo) — the one
+        # destructive/irreversible action here, kept visually distinct and
+        # away from the routine editing buttons in the centre bar.
+        self.btn_delete = tk.Button(self.bottom_frame, text="Delete Image",
+                                    command=self.controller.delete_current_image,
+                                    width=12, height=1, bg="#f8d7da", relief=tk.RAISED)
+        self.btn_delete.grid(row=0, column=2, sticky='e', padx=(10, 4))
+        self.controller.add_tooltip(self.btn_delete, "Shortcut: ctrl + b  |  Deletes the image and its label file")
+
+        # Right panel wrapper — a thin toggle strip on its canvas-facing edge
+        # stays visible even when the panel itself is collapsed.
+        self._right_wrapper = tk.Frame(root)
+        self._right_wrapper.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._right_panel_visible = True
+        self.right_toggle_strip = tk.Frame(self._right_wrapper, width=12, bg='#cccccc', cursor='hand2')
+        self.right_toggle_strip.pack(side=tk.LEFT, fill=tk.Y)
+        self.right_toggle_strip.pack_propagate(False)
+        self._right_toggle_label = tk.Label(self.right_toggle_strip, text='▶', bg='#cccccc',
+                                            font=("Helvetica", 8), cursor='hand2')
+        self._right_toggle_label.pack(expand=True)
+        self.right_toggle_strip.bind('<Button-1>', lambda e: self.controller.toggle_right_panel())
+        self._right_toggle_label.bind('<Button-1>', lambda e: self.controller.toggle_right_panel())
+
+        self.right_panel = tk.Frame(self._right_wrapper, width=200, relief=tk.RIDGE, bd=2)
         self.right_panel.pack(side=tk.RIGHT, fill=tk.Y)
         self.right_panel.pack_propagate(False)
 
@@ -116,23 +162,11 @@ class ImageViewerView:
         self._seg_on_delete = None
         self._seg_on_select = None
 
-        # Occluders panel
-        occluder_frame = tk.LabelFrame(paned, text="Occluders", font=("Helvetica", 9, "bold"))
+        # Occluders panel — this image's occluder rectangles only.
+        # Dataset-wide occluder actions (burn, convert tiny boxes) live in
+        # the ☰ menu's Dataset Tools submenu instead.
+        occluder_frame = tk.LabelFrame(paned, text="Occluders (this image)", font=("Helvetica", 9, "bold"))
         paned.add(occluder_frame, height=160)
-
-        self.btn_burn_occluders = tk.Button(
-            occluder_frame, text="Burn to images_masked/",
-            command=self.controller.burn_occluders_to_masked,
-            bg='#fff3cd', relief=tk.RAISED, font=("Helvetica", 8))
-        self.btn_burn_occluders.pack(fill=tk.X, padx=4, pady=(4, 2))
-
-        self.btn_tiny_to_occluders = tk.Button(
-            occluder_frame, text="Convert tiny boxes → occluders + burn",
-            command=self.controller.convert_tiny_boxes_and_burn,
-            bg='#fde8d8', relief=tk.RAISED, font=("Helvetica", 8))
-        self.btn_tiny_to_occluders.pack(fill=tk.X, padx=4, pady=(0, 2))
-        self.controller.add_tooltip(self.btn_tiny_to_occluders,
-            "Removes all boxes with area < 0.0024 from labels, adds them as occluders, then burns images_masked/")
 
         occ_canvas = tk.Canvas(occluder_frame, bd=0, highlightthickness=0)
         occ_scroll = tk.Scrollbar(occluder_frame, orient='vertical', command=occ_canvas.yview)
@@ -197,63 +231,111 @@ class ImageViewerView:
         # Variable to track if annotations are being shown
         self.showing_annotations = False
 
+    def _v_separator(self, parent):
+        """Thin vertical divider between button clusters within a row."""
+        sep = tk.Frame(parent, width=2, bg='#bbbbbb')
+        sep.pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=2)
+        return sep
+
     def create_buttons(self):
-        btn_cfg = {"height": 2, "bg": "white", "relief": tk.RAISED}
+        btn_cfg = {"height": 1, "bg": "white", "relief": tk.RAISED}
 
-        self.btn_edit = tk.Button(self.button_frame, text="Edit Mode",
-                                  command=self.controller.toggle_edit_mode, width=10, **btn_cfg)
-        self.btn_edit.grid(row=0, column=0, padx=5)
-        self.controller.add_tooltip(self.btn_edit, "Shortcut: e")
+        # Row 0: navigation | editing modes | fullscreen
+        row0 = tk.Frame(self.button_frame)
+        row0.grid(row=0, column=0, columnspan=9)
 
-        self.btn_prev = tk.Button(self.button_frame, text="<< Prev",
+        self.btn_prev = tk.Button(row0, text="<< Prev",
                                   command=self.controller.show_prev_image, width=10, **btn_cfg)
-        self.btn_prev.grid(row=0, column=1, padx=5)
+        self.btn_prev.pack(side=tk.LEFT, padx=(0, 5))
         self.controller.add_tooltip(self.btn_prev, "Shortcut: a")
 
-        self.btn_next = tk.Button(self.button_frame, text="Next >>",
+        self.btn_next = tk.Button(row0, text="Next >>",
                                   command=self.controller.show_next_image, width=10, **btn_cfg)
-        self.btn_next.grid(row=0, column=2, padx=5)
+        self.btn_next.pack(side=tk.LEFT, padx=5)
         self.controller.add_tooltip(self.btn_next, "Shortcut: d")
 
-        self.btn_show_annotations = tk.Button(self.button_frame, text="Show Annotations",
+        self._v_separator(row0)
+
+        self.btn_edit = tk.Button(row0, text="Edit Mode",
+                                  command=self.controller.toggle_edit_mode, width=10, **btn_cfg)
+        self.btn_edit.pack(side=tk.LEFT, padx=5)
+        self.controller.add_tooltip(self.btn_edit, "Shortcut: e")
+
+        self.btn_cover_mode = tk.Button(row0, text="Cover Mode", width=11,
+                                        command=self.controller.toggle_cover_mode, **btn_cfg)
+        self.btn_cover_mode.pack(side=tk.LEFT, padx=5)
+        self.controller.add_tooltip(self.btn_cover_mode,
+                                    "Shortcut: v  |  Draw white covers over static background objects")
+
+        self.btn_brush_mode = tk.Button(row0, text="Brush Mode", width=11,
+                                        command=self.controller.toggle_seg_tool_mode, **btn_cfg)
+        self.btn_brush_mode.pack(side=tk.LEFT, padx=5)
+        self.controller.add_tooltip(self.btn_brush_mode,
+                                    "Shortcut: b  |  Seg mode only — left = paint, right = erase, "
+                                    "scroll = resize, double-click = finish")
+
+        self._v_separator(row0)
+
+        self.btn_fullscreen = tk.Button(row0, text="Fullscreen",
+                                        command=self.controller.toggle_fullscreen, width=10, **btn_cfg)
+        self.btn_fullscreen.pack(side=tk.LEFT, padx=5)
+        self.controller.add_tooltip(self.btn_fullscreen, "Shortcut: q")
+
+        self._v_separator(row0)
+
+        self.btn_zoom_out = tk.Button(row0, text="-", width=3,
+                                      command=self.controller.zoom_out, **btn_cfg)
+        self.btn_zoom_out.pack(side=tk.LEFT, padx=(5, 0))
+        self.controller.add_tooltip(self.btn_zoom_out, "Shortcut: ctrl + -")
+
+        self.zoom_label = tk.Label(row0, text="100%", width=5, height=1, bg="white", relief=tk.SUNKEN)
+        self.zoom_label.pack(side=tk.LEFT)
+
+        self.btn_zoom_in = tk.Button(row0, text="+", width=3,
+                                     command=self.controller.zoom_in, **btn_cfg)
+        self.btn_zoom_in.pack(side=tk.LEFT)
+        self.controller.add_tooltip(self.btn_zoom_in, "Shortcut: ctrl + =")
+
+        self.btn_zoom_fit = tk.Button(row0, text="Fit", width=5,
+                                      command=self.controller.reset_zoom, **btn_cfg)
+        self.btn_zoom_fit.pack(side=tk.LEFT, padx=(4, 0))
+        self.controller.add_tooltip(self.btn_zoom_fit,
+                                    "Shortcut: ctrl + 0  |  Ctrl+Scroll over the image to zoom, "
+                                    "middle-drag to pan")
+
+        # Row 1: annotation actions
+        row1 = tk.Frame(self.button_frame)
+        row1.grid(row=1, column=0, columnspan=9, pady=(4, 0))
+
+        self.btn_show_annotations = tk.Button(row1, text="Show Annotations",
                                               command=self.show_annotations, width=16, **btn_cfg)
-        self.btn_show_annotations.grid(row=0, column=3, padx=5)
+        self.btn_show_annotations.pack(side=tk.LEFT, padx=5)
         self.controller.add_tooltip(self.btn_show_annotations, "Toggle annotation visibility")
 
-        self.btn_save = tk.Button(self.button_frame, text="Save",
+        self.btn_save = tk.Button(row1, text="Save",
                                   command=self.controller.save_bounding_boxes, width=8, **btn_cfg)
-        self.btn_save.grid(row=0, column=4, padx=(20, 5))
+        self.btn_save.pack(side=tk.LEFT, padx=5)
         self.controller.add_tooltip(self.btn_save, "Shortcut: ctrl + s")
 
-        self.btn_delete_bbox = tk.Button(self.button_frame, text="Delete Ann",
-                                         command=self.controller.delete_selected_annotation, width=12, **btn_cfg)
-        self.btn_delete_bbox.grid(row=0, column=5, padx=5)
-        self.controller.add_tooltip(self.btn_delete_bbox, "Shortcut: g")
-
-        self.btn_deselect = tk.Button(self.button_frame, text="Deselect",
+        self.btn_deselect = tk.Button(row1, text="Deselect",
                                       command=self.controller.deselect_annotation, width=10, **btn_cfg)
-        self.btn_deselect.grid(row=0, column=6, padx=5)
+        self.btn_deselect.pack(side=tk.LEFT, padx=5)
         self.controller.add_tooltip(self.btn_deselect, "Shortcut: Escape  |  Clear annotation selection")
 
-        self.btn_delete = tk.Button(self.button_frame, text="Delete Image",
-                                    command=self.controller.delete_current_image, width=12, **btn_cfg)
-        self.btn_delete.grid(row=0, column=7, padx=5)
-        self.controller.add_tooltip(self.btn_delete, "Shortcut: ctrl + b")
-
-        self.btn_fullscreen = tk.Button(self.button_frame, text="Fullscreen",
-                                        command=self.controller.toggle_fullscreen, width=10, **btn_cfg)
-        self.btn_fullscreen.grid(row=0, column=8, padx=5)
-        self.controller.add_tooltip(self.btn_fullscreen, "Shortcut: q")
+        self.btn_delete_bbox = tk.Button(row1, text="Delete Ann",
+                                         command=self.controller.delete_selected_annotation, width=12, **btn_cfg)
+        self.btn_delete_bbox.pack(side=tk.LEFT, padx=5)
+        self.controller.add_tooltip(self.btn_delete_bbox, "Shortcut: g")
 
         # Undo pinned to the bottom right
         self.btn_undo = tk.Button(self.bottom_frame, text="Undo",
                                   command=self.controller.undo_last_action, width=8, **btn_cfg)
-        self.btn_undo.grid(row=0, column=2, sticky='e', padx=(10, 0))
+        self.btn_undo.grid(row=0, column=3, sticky='e', padx=(4, 0))
         self.controller.add_tooltip(self.btn_undo, "Shortcut: ctrl + z")
 
-        # Row 1: review / inspection controls
+        # Row 2: review / inspection controls
         review_frame = tk.Frame(self.button_frame)
-        review_frame.grid(row=1, column=0, columnspan=9, pady=(4, 0))
+        review_frame.grid(row=2, column=0, columnspan=9, pady=(4, 0))
 
         self.btn_play = tk.Button(review_frame, text="▶ Play", width=8,
                                   command=self.controller.toggle_slideshow, **btn_cfg)
@@ -288,12 +370,6 @@ class ImageViewerView:
                                   command=self.controller.jump_to_image_by_number, **btn_cfg)
         self.btn_jump.pack(side=tk.LEFT, padx=4)
         self.controller.add_tooltip(self.btn_jump, "Shortcut: ctrl + g  |  Go to image by number")
-
-        self.btn_cover_mode = tk.Button(review_frame, text="Cover Mode", width=11,
-                                        command=self.controller.toggle_cover_mode, **btn_cfg)
-        self.btn_cover_mode.pack(side=tk.LEFT, padx=(12, 4))
-        self.controller.add_tooltip(self.btn_cover_mode,
-                                    "Shortcut: v  |  Draw white covers over static background objects")
 
 
     def _populate_recent_menu(self):
@@ -567,6 +643,24 @@ class ImageViewerView:
             self.left_panel.pack_forget()
             self._toggle_label.config(text='▶')
 
+    def toggle_right_panel(self):
+        self._right_panel_visible = not self._right_panel_visible
+        if self._right_panel_visible:
+            self.right_panel.pack(side=tk.RIGHT, fill=tk.Y)
+            self._right_toggle_label.config(text='▶')
+        else:
+            self.right_panel.pack_forget()
+            self._right_toggle_label.config(text='◀')
+
+    def toggle_bottom_toolbar(self):
+        self._bottom_toolbar_visible = not self._bottom_toolbar_visible
+        if self._bottom_toolbar_visible:
+            self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+            self._bottom_toggle_label.config(text='▼')
+        else:
+            self.bottom_frame.pack_forget()
+            self._bottom_toggle_label.config(text='▲')
+
     # ------------------------------------------------------------------
     # Occluder panel
     # ------------------------------------------------------------------
@@ -576,6 +670,15 @@ class ImageViewerView:
             self.btn_cover_mode.config(text="Covering...", bg="lightyellow", relief=tk.SUNKEN)
         else:
             self.btn_cover_mode.config(text="Cover Mode", bg="white", relief=tk.RAISED)
+
+    def update_zoom_label(self, zoom):
+        self.zoom_label.config(text=f"{int(round(zoom * 100))}%")
+
+    def update_seg_tool_mode_button(self, active):
+        if active:
+            self.btn_brush_mode.config(text="Brushing...", bg="lightyellow", relief=tk.SUNKEN)
+        else:
+            self.btn_brush_mode.config(text="Brush Mode", bg="white", relief=tk.RAISED)
 
     def update_occluder_list(self, occluder_rects, persistent_specs=None):
         """Rebuild occluder rows for the current image."""

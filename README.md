@@ -4,7 +4,7 @@
 
 > ⚠️ This project is a work in progress. Features are actively being developed and things may change between versions.
 
-Current version: **v0.4.4**
+Current version: **v0.4.5**
 
 ---
 

@@ -25,7 +25,7 @@ CAT:annotation is a desktop tool for reviewing and annotating image datasets in 
 
 Install dependencies:
 ```
-pip install pillow opencv-python numpy
+pip install -r requirements.txt
 ```
 
 ### Launch
@@ -224,3 +224,4 @@ my_project/
 - The undo stack holds up to 50 actions and is cleared when switching sets; in segmentation projects, only image deletion is undoable
 - ETA is a rolling average of the last 30 navigation steps
 - Zoom/pan always re-crops from the original image at its full resolution, rather than magnifying an already-downscaled preview
+- `occluders.json`, `flagged.txt`, and `index.json` are plain last-write-wins files with no locking — safe for one person working on a given set at a time, but two people editing the *same* set simultaneously can overwrite each other's flags/occluders/position

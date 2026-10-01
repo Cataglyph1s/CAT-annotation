@@ -90,10 +90,19 @@ class BoundingBoxEditor:
         self._pan_start = None
 
         # Open the image
-        self.image = Image.open(image_path)
-
-        # Store original dimensions
-        self.original_width, self.original_height = self.image.size
+        try:
+            self.image = Image.open(image_path)
+            self.original_width, self.original_height = self.image.size
+        except Exception as e:
+            # A corrupt/unreadable file shouldn't crash the whole app — show
+            # an inline message and leave this frame blank instead.
+            self.image = None
+            self.original_width, self.original_height = 0, 0
+            self.canvas.create_text(
+                10, 10, anchor='nw', fill='red', tags='annotation',
+                text=f"Could not open image:\n{os.path.basename(image_path)}\n{e}")
+            self._loading = False
+            return
 
         # Reset the viewport to fit-to-canvas, centered, on every new image
         self.zoom = 1.0

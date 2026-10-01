@@ -171,6 +171,14 @@ class ProjectWizard:
 
         new_path = os.path.join(base, name)
         if new_path != self._project_path:
+            if os.path.exists(new_path):
+                messagebox.showwarning(
+                    "Name taken",
+                    f"A project already exists at:\n{new_path}\n\n"
+                    "Choose a different name or location, or open the existing "
+                    "project instead via ☰ → Open Folder.",
+                    parent=self.window)
+                return
             self._sets = []  # reset sets if project location changed
 
         try:

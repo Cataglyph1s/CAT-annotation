@@ -1,5 +1,7 @@
 import os
 import json
+import shutil
+import time
 
 _CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".catannotation", "config.json")
 
@@ -8,10 +10,20 @@ class AppConfig:
 
     @staticmethod
     def _load():
-        if os.path.exists(_CONFIG_PATH):
+        if not os.path.exists(_CONFIG_PATH):
+            return {}
+        try:
             with open(_CONFIG_PATH, 'r') as f:
                 return json.load(f)
-        return {}
+        except (json.JSONDecodeError, OSError):
+            # Corrupted config shouldn't block the app from starting — move
+            # it aside (so nothing is silently lost) and start fresh.
+            backup_path = _CONFIG_PATH + f".corrupt-{int(time.time())}"
+            try:
+                shutil.move(_CONFIG_PATH, backup_path)
+            except OSError:
+                pass
+            return {}
 
     @staticmethod
     def _save(config):

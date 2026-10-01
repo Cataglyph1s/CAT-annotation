@@ -41,12 +41,17 @@ class ProjectManager:
 
     @staticmethod
     def load_project_config(folder):
-        """Looks for project.json in folder or its parent. Returns the config dict or None."""
+        """Looks for project.json in folder or its parent. Returns the config
+        dict, or None if missing or unreadable (e.g. corrupted/hand-edited) —
+        callers already treat None as "fall back to defaults"."""
         for path in [folder, os.path.dirname(folder)]:
             config_path = os.path.join(path, "project.json")
             if os.path.exists(config_path):
-                with open(config_path, 'r') as f:
-                    return json.load(f)
+                try:
+                    with open(config_path, 'r') as f:
+                        return json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    return None
         return None
 
     @staticmethod

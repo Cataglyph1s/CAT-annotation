@@ -50,6 +50,21 @@ The project mode (bounding box vs. segmentation) is set per project — a segmen
 
 ---
 
+## Building a standalone .exe
+
+For sharing with colleagues who don't have Python set up:
+
+```
+pip install pyinstaller
+build.bat
+```
+
+This produces `dist/CAT-annotation/` — a folder containing `CAT-annotation.exe` and its dependencies. Ship the whole folder (zip it); colleagues run the `.exe` from inside it, no Python install required. `pyinstaller` is a build-only tool and isn't in `requirements.txt` since it's not needed to just run the app from source.
+
+The build uses `main.spec` (`--onedir`, no console window). `--onedir` launches noticeably faster than a `--onefile` build, at the cost of shipping a folder instead of a single file — worth it for an internal tool that isn't launched from, say, a USB stick.
+
+---
+
 ## Keyboard shortcuts
 
 ### Navigation

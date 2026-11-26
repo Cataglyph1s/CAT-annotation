@@ -100,7 +100,7 @@ The build uses `main.spec` (`--onedir`, no console window). `--onedir` launches 
 | Left-drag | Paint |
 | Right-drag | Erase |
 | Scroll wheel | Grow / shrink brush size |
-| Double-click | Finish the current mask → vectorized into a polygon and added as one instance |
+| Double-click | Finish the current mask → vectorized into a polygon; updates the selected instance, or adds a new one if nothing was selected |
 
 ### Zoom & pan
 
@@ -153,9 +153,10 @@ Segmentation projects support two ways to draw a mask, toggled with the **Brush 
 **Brush tool**
 1. Press `e` to enter Edit Mode, then toggle **Brush Mode** on
 2. Left-drag to paint, right-drag to erase — a live colored overlay shows the working mask; scroll to resize the brush
-3. Double-click to finish — the painted mask is vectorized into a polygon and added as a new instance
+3. Double-click to finish — the painted mask is vectorized into a polygon
 4. If a mask ends up with disconnected blobs, they're bridged into a single polygon so it still saves as one instance
-5. Brush Mode currently creates new instances only — reshaping an existing polygon still uses the vertex-drag handles from the polygon tool
+5. **Editing an existing instance**: select it first (click its row in the Annotations list, or right-click it on the canvas in Polygon tool mode), *then* toggle Brush Mode on — its current shape loads as the paintable mask instead of a blank one. Paint/erase as usual and double-click to commit the new shape onto that same instance (no duplicate is created). Erasing the whole shape and double-clicking cancels the edit rather than deleting it — use `g` (or the list panel's delete button) for that.
+6. With nothing selected, Brush Mode works as before — it paints and commits a brand-new instance
 
 ### Zoom & pan (either mode)
 
@@ -223,6 +224,14 @@ Optional per-model tuning: a sidecar JSON next to the model, e.g. `yolov8n.onnx.
 > **Scope note:** output decoding targets **Ultralytics YOLOv8/v9/v11/v26 ONNX exports**. It auto-detects both the traditional per-class-score output layout and the newer already-decoded `[box, score, class_id]` layout some NMS-free heads declare as their final output, and both box coordinate conventions (see `box_format` above). Older YOLOv5-style exports (different output layout, includes a separate objectness score) aren't supported.
 >
 > **Caveat if you use pinned/persistent bounding boxes:** those get auto-injected onto every new image, which means auto-annotate will always see those images as "already annotated" and skip them.
+
+### Adding a set to a project
+
+**☰ → Add Set to Project...** adds a new named set (e.g. another `train_02/`) to the currently open project, from one of three sources:
+
+- **Create empty set** — just the folder structure, add images later.
+- **Import from YOLO folder** — copies images+labels from an existing YOLO-format folder; if it has a `dataset.yaml`, classes are auto-matched to the project's class list by name (editable mapping, with a "skip" option for classes you don't want).
+- **Import from video** — extracts frames from a video file at a target FPS directly into the new set (same extraction used by the standalone **☰ → Import Video...**, just targeting this project/set instead of an arbitrary folder). The set's labels start empty — annotate it using whichever mode (bounding box or segmentation) the project is already set to, same as any other set.
 
 ### Collapsible panels
 

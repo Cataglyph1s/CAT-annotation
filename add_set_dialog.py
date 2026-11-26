@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from project_manager import ProjectManager
+from video_importer import extract_video_frames
 
 
 def _parse_yaml_classes(folder):
@@ -88,6 +89,9 @@ class AddSetDialog:
         tk.Radiobutton(self.window, text="Import from YOLO folder",
                        variable=self._mode_var, value="import",
                        command=self._on_mode_change).pack(anchor='w', padx=28, pady=2)
+        tk.Radiobutton(self.window, text="Import from video",
+                       variable=self._mode_var, value="video",
+                       command=self._on_mode_change).pack(anchor='w', padx=28, pady=2)
 
         # Source folder section — built but hidden until import mode is selected
         self._source_frame = tk.Frame(self.window)
@@ -118,6 +122,30 @@ class AddSetDialog:
         map_canvas.bind('<Configure>',
                         lambda e: map_canvas.itemconfig(map_win, width=e.width))
 
+        # Video source section — built but hidden until video mode is selected
+        self._video_frame = tk.Frame(self.window)
+
+        video_row = tk.Frame(self._video_frame)
+        video_row.pack(fill=tk.X, padx=14, pady=(6, 2))
+        tk.Label(video_row, text="Video file:", width=13, anchor='w').pack(side=tk.LEFT)
+        self._video_path_var = tk.StringVar()
+        tk.Entry(video_row, textvariable=self._video_path_var, width=26,
+                 state='readonly').pack(side=tk.LEFT, padx=(0, 6))
+        tk.Button(video_row, text="Browse", width=8,
+                  command=self._browse_video).pack(side=tk.LEFT)
+
+        fps_row = tk.Frame(self._video_frame)
+        fps_row.pack(fill=tk.X, padx=14, pady=(2, 2))
+        tk.Label(fps_row, text="Target FPS:", width=13, anchor='w').pack(side=tk.LEFT)
+        self._target_fps_var = tk.StringVar(value="1.0")
+        tk.Entry(fps_row, textvariable=self._target_fps_var, width=8).pack(side=tk.LEFT)
+        tk.Label(fps_row, text="  (frames per second to extract)", fg='gray',
+                 font=("Helvetica", 8)).pack(side=tk.LEFT)
+
+        self._video_progress = ttk.Progressbar(self._video_frame, orient='horizontal',
+                                               mode='determinate', maximum=100)
+        self._video_progress.pack(fill=tk.X, padx=14, pady=(6, 2))
+
         # Status + buttons (always visible, anchored at bottom)
         self._status_var = tk.StringVar()
         self._status_label = tk.Label(self.window, textvariable=self._status_var,
@@ -135,16 +163,23 @@ class AddSetDialog:
         self._confirm_btn.pack(side=tk.RIGHT)
 
     def _on_mode_change(self):
-        if self._mode_var.get() == "import":
+        mode = self._mode_var.get()
+        self._source_frame.pack_forget()
+        self._class_map_outer.pack_forget()
+        self._video_frame.pack_forget()
+        self._status_var.set("")
+
+        if mode == "import":
             self._source_frame.pack(fill=tk.X, before=self._status_label)
             self.window.geometry("540x500")
             self.window.resizable(False, True)
+        elif mode == "video":
+            self._video_frame.pack(fill=tk.X, before=self._status_label)
+            self.window.geometry("540x420")
+            self.window.resizable(False, False)
         else:
-            self._source_frame.pack_forget()
-            self._class_map_outer.pack_forget()
             self.window.geometry("540x280")
             self.window.resizable(False, False)
-            self._status_var.set("")
 
     def _browse_source(self):
         folder = filedialog.askdirectory(parent=self.window, title="Select source YOLO folder")
@@ -153,6 +188,13 @@ class AddSetDialog:
         self._source_folder = folder
         self._source_var.set(folder)
         self._load_source_classes(folder)
+
+    def _browse_video(self):
+        path = filedialog.askopenfilename(
+            parent=self.window, title="Select Video File",
+            filetypes=[("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv"), ("All files", "*.*")])
+        if path:
+            self._video_path_var.set(path)
 
     def _load_source_classes(self, folder):
         for w in self._map_inner.winfo_children():
@@ -219,7 +261,9 @@ class AddSetDialog:
                                    parent=self.window)
             return
 
-        if self._mode_var.get() == "empty":
+        mode = self._mode_var.get()
+
+        if mode == "empty":
             try:
                 set_path = ProjectManager.create_image_set(self.project_path, set_name)
             except Exception as e:
@@ -228,6 +272,10 @@ class AddSetDialog:
             self.window.destroy()
             if self.on_done:
                 self.on_done(set_path, 0, 0)
+            return
+
+        if mode == "video":
+            self._confirm_video(set_name)
             return
 
         # Import mode
@@ -251,6 +299,50 @@ class AddSetDialog:
                 self.window.after(0, lambda err=e: self._on_error(err))
 
         threading.Thread(target=do_import, daemon=True).start()
+
+    def _confirm_video(self, set_name):
+        video_path = self._video_path_var.get().strip()
+        if not video_path or not os.path.isfile(video_path):
+            messagebox.showwarning("No video", "Please select a valid video file.",
+                                   parent=self.window)
+            return
+        try:
+            target_fps = float(self._target_fps_var.get())
+            if target_fps <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("Invalid FPS", "Target FPS must be a positive number.",
+                                   parent=self.window)
+            return
+
+        try:
+            set_path = ProjectManager.create_image_set(self.project_path, set_name)
+        except Exception as e:
+            messagebox.showerror("Error", str(e), parent=self.window)
+            return
+
+        self._confirm_btn.config(state='disabled')
+        self._status_var.set("Extracting frames…")
+        self.window.update_idletasks()
+
+        result = {}
+
+        def on_progress(percent, status):
+            self.window.after(0, lambda: self._update_video_progress(percent, status))
+
+        def do_extract():
+            try:
+                images_dir, saved = extract_video_frames(video_path, set_path, target_fps, on_progress)
+                result['saved'] = saved
+                self.window.after(0, lambda: self._finish(set_path, result['saved'], 0))
+            except RuntimeError as e:
+                self.window.after(0, lambda err=e: self._on_error(err))
+
+        threading.Thread(target=do_extract, daemon=True).start()
+
+    def _update_video_progress(self, percent, status):
+        self._video_progress['value'] = percent
+        self._status_var.set(status)
 
     def _finish(self, set_path, n_img, n_lbl):
         self.window.destroy()

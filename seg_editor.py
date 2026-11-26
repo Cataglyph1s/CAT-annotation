@@ -218,7 +218,7 @@ class SegEditor:
             self._draw_seg(seg)
         if self.selected_seg is not None and self.selected_seg.polygon_id:
             self.canvas.itemconfig(self.selected_seg.polygon_id, outline='white', width=3)
-            if self.edit_mode:
+            if self.edit_mode and self.tool_mode != 'brush':
                 self._show_vertex_handles(self.selected_seg)
 
     def _cancel_session(self):
@@ -399,8 +399,28 @@ class SegEditor:
 
     def _ensure_brush_mask(self):
         if self._brush_mask is None:
-            self._brush_mask = Image.new('L', (self._disp_width, self._disp_height), 0)
+            if self.selected_seg is not None:
+                self._brush_mask = self._rasterize_seg_mask(self.selected_seg)
+            else:
+                self._brush_mask = Image.new('L', (self._disp_width, self._disp_height), 0)
             self._brush_draw = ImageDraw.Draw(self._brush_mask)
+
+    def _rasterize_seg_mask(self, seg):
+        """Renders an existing annotation's polygon into a brush-paintable
+        mask, in the same display-pixel coordinate space _brush_paint uses
+        (image-pixel * scale_factor — the canvas offset cancels out exactly
+        like it does in _brush_paint, since _draw_seg places canvas points
+        at image_px * scale_factor + offset and _brush_paint subtracts that
+        same offset back off)."""
+        import numpy as np
+        import cv2
+        mask = np.zeros((self._disp_height, self._disp_width), dtype=np.uint8)
+        pts = np.array(
+            [[int(round(x * self.scale_factor)), int(round(y * self.scale_factor))]
+             for x, y in seg.points],
+            dtype=np.int32)
+        cv2.fillPoly(mask, [pts], 255)
+        return Image.fromarray(mask, mode='L')
 
     def _brush_start(self, event, erase=False):
         self._brush_active = True
@@ -467,16 +487,27 @@ class SegEditor:
         contours, _ = cv2.findContours(mask_arr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         contours = [c.reshape(-1, 2) for c in contours if len(c) >= 3]
         if not contours:
+            # Fully erased (when editing a selection) or nothing painted at
+            # all (when creating new) — either way there's nothing to
+            # commit; leave any selected annotation untouched rather than
+            # deleting it (use the normal Delete action for that).
             self._cancel_brush()
             return
         merged = contours[0] if len(contours) == 1 else self._merge_contours(contours)
 
         inv_scale = (1.0 / self.scale_factor) if self.scale_factor else 1.0
         points = [(float(x) * inv_scale, float(y) * inv_scale) for x, y in merged]
-        seg = SegmentationAnnotation(points, self.current_class)
-        self.segs.append(seg)
-        self._cancel_brush()
-        self._draw_seg(seg)
+
+        editing_seg = self.selected_seg
+        if editing_seg is not None:
+            editing_seg.points = points
+            self._cancel_brush()
+            self._redraw_seg(editing_seg)
+        else:
+            seg = SegmentationAnnotation(points, self.current_class)
+            self.segs.append(seg)
+            self._cancel_brush()
+            self._draw_seg(seg)
         if self.on_seg_added:
             self.on_seg_added()
 
@@ -604,9 +635,14 @@ class SegEditor:
         if seg.polygon_id:
             self.canvas.itemconfig(seg.polygon_id, outline='white', width=3)
         if self.edit_mode:
-            self._show_vertex_handles(seg)
+            if self.tool_mode == 'brush':
+                self._ensure_brush_mask()
+                self._update_brush_overlay()
+            else:
+                self._show_vertex_handles(seg)
 
     def _deselect(self):
+        self._cancel_brush()
         self._clear_vertex_handles()
         if self.selected_seg:
             if self.selected_seg.polygon_id:
@@ -683,11 +719,21 @@ class SegEditor:
 
     def toggle_tool_mode(self):
         """Switch between 'polygon' and 'brush' annotation tools, discarding
-        any in-progress polygon/brush session on the way."""
+        any in-progress polygon/brush session on the way. If an annotation
+        is currently selected, switching into brush mode immediately shows
+        it as a paintable mask (instead of waiting for the first stroke),
+        and switching back to polygon mode restores its vertex handles."""
         if self._drawing:
             self._cancel_drawing()
         self._cancel_brush()
+        self._clear_vertex_handles()
         self.tool_mode = 'brush' if self.tool_mode == 'polygon' else 'polygon'
+        if self.selected_seg is not None and self.edit_mode:
+            if self.tool_mode == 'brush':
+                self._ensure_brush_mask()
+                self._update_brush_overlay()
+            else:
+                self._show_vertex_handles(self.selected_seg)
         return self.tool_mode
 
     def toggle_annotations(self):

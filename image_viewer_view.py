@@ -34,6 +34,12 @@ class ImageViewerView:
         self.app_menu.add_cascade(label="Dataset Tools", menu=self._dataset_tools_menu)
         self.app_menu.add_separator()
 
+        self._auto_annotate_menu = tk.Menu(self.app_menu, tearoff=0)
+        self._auto_annotate_menu.add_command(
+            label="Load Model...", command=self.controller.load_auto_annotate_model)
+        self.app_menu.add_cascade(label="Auto-Annotate", menu=self._auto_annotate_menu)
+        self.app_menu.add_separator()
+
         self._recent_menu = tk.Menu(self.app_menu, tearoff=0,
                                     postcommand=self._populate_recent_menu)
         self.app_menu.add_cascade(label="Recent Projects", menu=self._recent_menu)
@@ -326,6 +332,20 @@ class ImageViewerView:
                                          command=self.controller.delete_selected_annotation, width=12, **btn_cfg)
         self.btn_delete_bbox.pack(side=tk.LEFT, padx=5)
         self.controller.add_tooltip(self.btn_delete_bbox, "Shortcut: g")
+
+        self._v_separator(row1)
+
+        self.btn_auto_annotate = tk.Button(row1, text="Auto-Annotate",
+                                           command=self.controller.auto_annotate_current_image,
+                                           width=13, **btn_cfg)
+        self.btn_auto_annotate.pack(side=tk.LEFT, padx=5)
+        self.controller.add_tooltip(self.btn_auto_annotate,
+                                    "Shortcut: r  |  Run the loaded YOLO ONNX model on this image "
+                                    "(skipped if it already has annotations)")
+
+        self.auto_model_label = tk.Label(row1, text="No model loaded", fg='gray',
+                                         font=("Helvetica", 8), bg='SystemButtonFace')
+        self.auto_model_label.pack(side=tk.LEFT, padx=(0, 5))
 
         # Undo pinned to the bottom right
         self.btn_undo = tk.Button(self.bottom_frame, text="Undo",
@@ -673,6 +693,12 @@ class ImageViewerView:
 
     def update_zoom_label(self, zoom):
         self.zoom_label.config(text=f"{int(round(zoom * 100))}%")
+
+    def update_auto_model_label(self, model_name):
+        if model_name is None:
+            self.auto_model_label.config(text="No model loaded", fg='gray')
+        else:
+            self.auto_model_label.config(text=model_name, fg='black')
 
     def update_seg_tool_mode_button(self, active):
         if active:

@@ -20,7 +20,7 @@ CAT:annotation is a desktop tool for reviewing and annotating image datasets in 
 
 - Python 3.8+
 - `Pillow`
-- `opencv-python` (used by segmentation Brush Mode to vectorize painted masks into polygons)
+- `opencv-python` (used by segmentation Brush Mode to vectorize painted masks into polygons, and to run YOLO ONNX models for Auto-Annotate)
 - `numpy`
 
 Install dependencies:
@@ -100,7 +100,7 @@ The build uses `main.spec` (`--onedir`, no console window). `--onedir` launches 
 | Left-drag | Paint |
 | Right-drag | Erase |
 | Scroll wheel | Grow / shrink brush size |
-| Double-click | Finish the current mask → vectorized into a polygon and added as one instance |
+| Double-click | Finish the current mask → vectorized into a polygon; updates the selected instance, or adds a new one if nothing was selected |
 
 ### Zoom & pan
 
@@ -120,6 +120,12 @@ The build uses `main.spec` (`--onedir`, no console window). `--onedir` launches 
 | `Ctrl+F` | Jump to next flagged image (F >>) |
 | `Ctrl+Shift+F` | Jump to previous flagged image (<< F) |
 | `v` | Toggle Cover Mode (draw white occluders) — bounding-box projects only |
+
+### Auto-Annotate
+
+| Key | Action |
+|-----|--------|
+| `r` | Run the loaded model on the current image (skipped if it already has annotations) |
 
 ---
 
@@ -147,9 +153,10 @@ Segmentation projects support two ways to draw a mask, toggled with the **Brush 
 **Brush tool**
 1. Press `e` to enter Edit Mode, then toggle **Brush Mode** on
 2. Left-drag to paint, right-drag to erase — a live colored overlay shows the working mask; scroll to resize the brush
-3. Double-click to finish — the painted mask is vectorized into a polygon and added as a new instance
+3. Double-click to finish — the painted mask is vectorized into a polygon
 4. If a mask ends up with disconnected blobs, they're bridged into a single polygon so it still saves as one instance
-5. Brush Mode currently creates new instances only — reshaping an existing polygon still uses the vertex-drag handles from the polygon tool
+5. **Editing an existing instance**: select it first (click its row in the Annotations list, or right-click it on the canvas in Polygon tool mode), *then* toggle Brush Mode on — its current shape loads as the paintable mask instead of a blank one. Paint/erase as usual and double-click to commit the new shape onto that same instance (no duplicate is created). Erasing the whole shape and double-clicking cancels the edit rather than deleting it — use `g` (or the list panel's delete button) for that.
+6. With nothing selected, Brush Mode works as before — it paints and commits a brand-new instance
 
 ### Zoom & pan (either mode)
 
@@ -198,6 +205,34 @@ Very small boxes carry little to no usable shape signal once resized down to you
 
 > **Note:** label files are modified in place. Back up your `labels/` folder first if you want to be safe.
 
+### Auto-Annotate with a YOLO model
+
+Pre-populate annotations on an image using a YOLO model you supply yourself, then review/edit the results exactly like any hand-drawn annotation (drag, resize, delete, change class) — this doesn't replace annotating, it gives you a starting point.
+
+1. Export your trained model to **ONNX** (e.g. `model.export(format='onnx')` via Ultralytics) and drop the `.onnx` file into `<project>/models/`. `.pt` files aren't loaded directly — models run via OpenCV (`cv2.dnn`), already a dependency, so this adds no install size and works in the packaged `.exe`.
+   - **Newer NMS-free architectures (e.g. this project's `yolo26` family) need a different export path.** Their head has a `TopK`-based selection baked into the architecture itself (`nms=False` does **not** fix this — it's not what controls it). OpenCV's `cv2.dnn` sometimes can't even load a graph with this op — but worse, when it *does* load, it can silently compute the **wrong** top candidates with no error at all (confirmed by comparing against the source `.pt` model's own predictions on a real image: a true ~0.96-confidence detection came back as ~0.0003 through cv2.dnn, no crash, just quietly wrong). Use `SamiraYoloTrainingScripts/conversion_scripts/export_for_catannotation.py` instead of a plain `model.export(...)` — it always bypasses any TopK node it finds (never relies on cv2.dnn to execute one), and verifies both the result and the box coordinate convention (`box_format` above) against the `.pt` model's own prediction on a real sample image before finishing, rather than assuming either is correct.
+2. **☰ → Auto-Annotate → Load Model...** — pick the `.onnx` file. The tool auto-detects whether it's a detection or segmentation model from its own outputs, and warns (non-blocking) if that doesn't match the current project's mode, or if its class count doesn't match the project's class list.
+3. Click **Auto-Annotate** (or press `r`) on the current image. If it already has any annotations, it's skipped with a message — this never overwrites or adds alongside existing work.
+4. Predicted boxes/polygons are added as normal, fully editable annotations and autosaved like any other edit.
+
+Optional per-model tuning: a sidecar JSON next to the model, e.g. `yolov8n.onnx.json`:
+```json
+{"input_size": 640, "conf_threshold": 0.25, "iou_threshold": 0.45, "box_format": "cxcywh"}
+```
+`box_format` is `"cxcywh"` (center+size, the standard YOLOv8/v9/v11 raw-export convention) by default, or `"xyxy"` (corner coordinates) for architectures that encode boxes that way instead — `export_for_catannotation.py` sets this automatically, verified against the source `.pt` model's own predictions rather than assumed, whenever it has to work around a model's built-in NMS head (see below). Omit the whole sidecar to use all of these same defaults.
+
+> **Scope note:** output decoding targets **Ultralytics YOLOv8/v9/v11/v26 ONNX exports**. It auto-detects both the traditional per-class-score output layout and the newer already-decoded `[box, score, class_id]` layout some NMS-free heads declare as their final output, and both box coordinate conventions (see `box_format` above). Older YOLOv5-style exports (different output layout, includes a separate objectness score) aren't supported.
+>
+> **Caveat if you use pinned/persistent bounding boxes:** those get auto-injected onto every new image, which means auto-annotate will always see those images as "already annotated" and skip them.
+
+### Adding a set to a project
+
+**☰ → Add Set to Project...** adds a new named set (e.g. another `train_02/`) to the currently open project, from one of three sources:
+
+- **Create empty set** — just the folder structure, add images later.
+- **Import from YOLO folder** — copies images+labels from an existing YOLO-format folder; if it has a `dataset.yaml`, classes are auto-matched to the project's class list by name (editable mapping, with a "skip" option for classes you don't want).
+- **Import from video** — extracts frames from a video file at a target FPS directly into the new set (same extraction used by the standalone **☰ → Import Video...**, just targeting this project/set instead of an arbitrary folder). The set's labels start empty — annotate it using whichever mode (bounding box or segmentation) the project is already set to, same as any other set.
+
 ### Collapsible panels
 
 The **Sets** panel (left), the **Classes / Annotations / Occluders** panel (right), and the bottom **button toolbar** can each be collapsed independently to reclaim canvas space — click the thin arrow strip on each panel's edge to toggle it:
@@ -217,6 +252,7 @@ If a project has multiple sets (e.g. `train/`, `val/`) they appear in the **Sets
 ```
 my_project/
 ├── project.json          # class names and colours
+├── models/                # your .onnx models for Auto-Annotate (+ optional *.onnx.json sidecars)
 ├── train/
 │   ├── images/
 │   ├── labels/            # bounding-box projects

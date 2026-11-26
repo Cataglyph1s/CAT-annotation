@@ -4,6 +4,65 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 
+def extract_video_frames(video_path, output_folder, target_fps, progress_callback=None):
+    """Extract frames from video_path into output_folder/images/ (creating an
+    empty output_folder/labels/ alongside it), at approximately target_fps.
+
+    progress_callback(percent: int, status: str), if given, is called
+    periodically during extraction — shared by VideoImporter's own dialog
+    and AddSetDialog's "Import from video" option, so both report progress
+    the same way.
+
+    Returns (images_dir, saved_count). Raises RuntimeError if opencv-python
+    isn't installed or the video can't be opened.
+    """
+    try:
+        import cv2
+    except ImportError:
+        raise RuntimeError("opencv-python is not installed.\nRun: pip install opencv-python")
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError("Could not open video file.")
+
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if video_fps <= 0:
+        video_fps = 25.0
+
+    frame_interval = max(1, round(video_fps / target_fps))
+
+    images_dir = os.path.join(output_folder, "images")
+    labels_dir = os.path.join(output_folder, "labels")
+    os.makedirs(images_dir, exist_ok=True)
+    os.makedirs(labels_dir, exist_ok=True)
+
+    video_name = os.path.splitext(os.path.basename(video_path))[0]
+    frame_idx = 0
+    saved = 0
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if frame_idx % frame_interval == 0:
+            filename = f"{video_name}_{frame_idx:06d}.jpg"
+            cv2.imwrite(os.path.join(images_dir, filename), frame,
+                        [cv2.IMWRITE_JPEG_QUALITY, 95])
+            saved += 1
+
+        frame_idx += 1
+        if progress_callback:
+            percent = int((frame_idx / total_frames) * 100) if total_frames > 0 else 0
+            progress_callback(percent, f"Extracting... {saved} frames saved")
+
+    cap.release()
+    if progress_callback:
+        progress_callback(100, f"Done — {saved} frames saved to {images_dir}")
+    return images_dir, saved
+
+
 class VideoImporter:
     SUPPORTED_FORMATS = (
         ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv"),
@@ -120,55 +179,14 @@ class VideoImporter:
         self.window.after(100, self._poll)
 
     def _run_import(self, video_path, output_folder, target_fps):
+        def on_progress(percent, status):
+            self._progress = percent
+            self._status = status
+
         try:
-            import cv2
-        except ImportError:
-            self._error = "opencv-python is not installed.\nRun: pip install opencv-python"
-            self._done = True
-            return
-
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            self._error = "Could not open video file."
-            self._done = True
-            return
-
-        video_fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        if video_fps <= 0:
-            video_fps = 25.0
-
-        frame_interval = max(1, round(video_fps / target_fps))
-
-        images_dir = os.path.join(output_folder, "images")
-        labels_dir = os.path.join(output_folder, "labels")
-        os.makedirs(images_dir, exist_ok=True)
-        os.makedirs(labels_dir, exist_ok=True)
-
-        video_name = os.path.splitext(os.path.basename(video_path))[0]
-        frame_idx = 0
-        saved = 0
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            if frame_idx % frame_interval == 0:
-                filename = f"{video_name}_{frame_idx:06d}.jpg"
-                cv2.imwrite(os.path.join(images_dir, filename), frame,
-                            [cv2.IMWRITE_JPEG_QUALITY, 95])
-                saved += 1
-
-            frame_idx += 1
-            if total_frames > 0:
-                self._progress = int((frame_idx / total_frames) * 100)
-            self._status = f"Extracting... {saved} frames saved"
-
-        cap.release()
-        self._progress = 100
-        self._status = f"Done — {saved} frames saved to {images_dir}"
+            extract_video_frames(video_path, output_folder, target_fps, on_progress)
+        except RuntimeError as e:
+            self._error = str(e)
         self._done = True
 
     def _poll(self):

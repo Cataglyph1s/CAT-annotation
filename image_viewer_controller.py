@@ -5,6 +5,7 @@ import json
 
 from PIL import Image, ImageDraw
 from bounding_box import BoundingBox
+from segmentation_annotation import SegmentationAnnotation
 from image_loader import ImageLoader
 from bbox_editor import BoundingBoxEditor
 from seg_editor import SegEditor
@@ -13,6 +14,7 @@ from video_importer import VideoImporter
 from project_manager import ProjectManager
 from project_wizard import ProjectWizard
 from app_config import AppConfig
+from onnx_yolo_model import OnnxYoloModel
 
 import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
@@ -47,6 +49,12 @@ class ImageViewerController:
         self._persistent_bboxes = set()  # (x1,y1,x2,y2,class_num) tuples pinned to carry across frames
         self._occluders = {}             # {filename: [(x1,y1,x2,y2), ...]} loaded from occluders.json
         self._persistent_occluders = set()  # (x1,y1,x2,y2) carried to each new frame
+
+        # Auto-annotate (YOLO ONNX)
+        self._auto_model = None
+        self._auto_model_name = None
+        self._auto_model_path = None
+        self._auto_model_project_root = None
 
         # Create view first — establishes bottom bar and content_frame
         self.view = ImageViewerView(root, self)
@@ -114,6 +122,7 @@ class ImageViewerController:
         self.root.bind('<Control-plus>', lambda e: self.zoom_in())
         self.root.bind('<Control-minus>', lambda e: self.zoom_out())
         self.root.bind('<Control-0>', lambda e: self.reset_zoom())
+        self.root.bind('<r>', lambda e: self.auto_annotate_current_image())
         self.root.bind('<Escape>', lambda e: self.deselect_annotation())
 
         # Bind numeric keys for class selection when in edit mode
@@ -322,6 +331,7 @@ class ImageViewerController:
         self.folder = folder
         self.loader = new_loader
         self._apply_project_config(folder)
+        self._load_last_auto_model()
         self.editor.class_mapping = self.loader.class_mapping
         self.current_index = self.loader.load_last_image_index()
         self.action_stack.clear()
@@ -1021,6 +1031,173 @@ class ImageViewerController:
 
     def open_recent_folder(self, folder):
         self._load_folder(folder)
+
+    # ------------------------------------------------------------------
+    # Auto-annotate (YOLO ONNX)
+    # ------------------------------------------------------------------
+
+    def _project_root(self):
+        """Resolve the project root (where project.json / models/ live) from
+        the currently-opened set folder — handles both 'opened the project
+        root directly' and 'opened a set inside it' cases. Falls back to the
+        opened folder itself for ad-hoc folders with no project.json."""
+        if self.loader is None:
+            return None
+        folder = self.loader.folder
+        if os.path.exists(os.path.join(folder, 'project.json')):
+            return folder
+        parent = os.path.dirname(folder)
+        if os.path.exists(os.path.join(parent, 'project.json')):
+            return parent
+        return folder
+
+    def load_auto_annotate_model(self):
+        if self.loader is None:
+            return
+        project_root = self._project_root()
+        models_dir = os.path.join(project_root, 'models')
+        os.makedirs(models_dir, exist_ok=True)
+
+        path = filedialog.askopenfilename(
+            title="Load YOLO ONNX model",
+            initialdir=models_dir,
+            filetypes=[("ONNX model", "*.onnx")],
+        )
+        if not path:
+            return
+
+        try:
+            model = OnnxYoloModel.load(path)
+        except Exception as e:
+            messagebox.showerror("Could not load model", f"{os.path.basename(path)}:\n{e}")
+            return
+
+        expected_task = 'segment' if self._project_mode == 'seg' else 'detect'
+        if model.task != expected_task:
+            proceed = messagebox.askyesno(
+                "Model/project type mismatch",
+                f"This model looks like a '{model.task}' model, but the current "
+                f"project is in '{self._project_mode}' mode (expects '{expected_task}').\n\n"
+                f"Load it anyway?")
+            if not proceed:
+                return
+
+        self._auto_model = model
+        self._auto_model_name = os.path.basename(path)
+        self._auto_model_path = path
+        self._auto_model_project_root = project_root
+        self.view.update_auto_model_label(self._auto_model_name)
+        self.view.update_info_bar(f"Loaded model: {self._auto_model_name} ({model.task})")
+        self._save_last_model_path(project_root, path)
+
+    @staticmethod
+    def _last_model_sidecar_path(project_root):
+        return os.path.join(project_root, 'models', '.last_model.json')
+
+    def _save_last_model_path(self, project_root, path):
+        try:
+            with open(self._last_model_sidecar_path(project_root), 'w') as f:
+                json.dump({'path': path}, f)
+        except OSError:
+            pass
+
+    def _load_last_auto_model(self):
+        """Auto-loads the last model used in this project, if any, so you
+        don't have to re-pick it every time you reopen the project/set."""
+        project_root = self._project_root()
+        if project_root is None:
+            return
+        sidecar = self._last_model_sidecar_path(project_root)
+        if not os.path.exists(sidecar):
+            # No remembered model for this project — if a model from a
+            # *different* project is still loaded (e.g. you just switched
+            # projects), drop it rather than keep applying it to a project
+            # it wasn't trained for.
+            if self._auto_model is not None and self._auto_model_project_root != project_root:
+                self._auto_model = None
+                self._auto_model_name = None
+                self._auto_model_path = None
+                self._auto_model_project_root = None
+                self.view.update_auto_model_label(None)
+            return
+        try:
+            with open(sidecar, 'r') as f:
+                path = json.load(f).get('path')
+        except (OSError, json.JSONDecodeError):
+            return
+        if not path or not os.path.exists(path) or path == self._auto_model_path:
+            return
+        try:
+            model = OnnxYoloModel.load(path)
+        except Exception as e:
+            self.view.update_info_bar(
+                f"Could not auto-load last model ({os.path.basename(path)}): {e}")
+            return
+        self._auto_model = model
+        self._auto_model_name = os.path.basename(path)
+        self._auto_model_path = path
+        self._auto_model_project_root = project_root
+        self.view.update_auto_model_label(self._auto_model_name)
+        self.view.update_info_bar(f"Auto-loaded last model: {self._auto_model_name} ({model.task})")
+
+    def auto_annotate_current_image(self):
+        if self.loader is None or not self.loader.has_images():
+            return
+        if self._auto_model is None:
+            self.view.update_info_bar("No model loaded — use ☰ → Auto-Annotate → Load Model... first.")
+            return
+
+        existing = self.editor.segs if self._project_mode == 'seg' else self.editor.bboxes
+        if existing:
+            self.view.update_info_bar("Image already has annotations — auto-annotate skipped.")
+            return
+
+        image_path, _ = self.loader.get_image_and_label(self.current_index)
+        try:
+            image = Image.open(image_path)
+            detections = self._auto_model.predict(image)
+        except Exception as e:
+            messagebox.showerror("Auto-annotate failed", str(e))
+            return
+
+        n_classes = self._auto_model.n_classes
+        n_project_classes = len(self.loader.class_mapping) if self.loader.class_mapping else 0
+        if n_classes and n_project_classes and n_classes != n_project_classes:
+            messagebox.showwarning(
+                "Class count mismatch",
+                f"This model outputs {n_classes} classes, but the project has "
+                f"{n_project_classes}. Predicted class IDs may not match your "
+                f"project's classes — check results carefully.")
+
+        added = 0
+        if self._project_mode == 'seg':
+            for det in detections:
+                if det.polygon is None or len(det.polygon) < 3:
+                    continue
+                seg = SegmentationAnnotation(det.polygon, det.class_id)
+                self.editor.segs.append(seg)
+                self.editor._draw_seg(seg)
+                added += 1
+            if added:
+                self.view.update_seg_annotation_list(
+                    self.editor.segs, self.loader.get_class_names(),
+                    on_delete=self.delete_seg_by_index, on_select=self.select_seg_by_index
+                )
+        else:
+            for det in detections:
+                x1, y1, x2, y2 = det.box
+                bbox = BoundingBox(int(x1), int(y1), int(x2), int(y2), det.class_id)
+                self.editor.bboxes.append(bbox)
+                self.editor.draw_bounding_box(bbox, self.editor.x_offset, self.editor.y_offset,
+                                             self.editor.scale_factor)
+                added += 1
+            if added:
+                self.view.update_annotation_list(self.editor.bboxes, self.loader.get_class_names(),
+                                                 self._persistent_bboxes)
+
+        if added and self.autosave:
+            self.save_bounding_boxes()
+        self.view.update_info_bar(f"Auto-annotate: added {added} annotation(s).")
 
     def get_recent_folders(self):
         return AppConfig.get_recent_folders()
